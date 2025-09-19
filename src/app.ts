@@ -1,17 +1,53 @@
 import bodyParser from "body-parser";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import { createPool } from "mysql2/promise";
+import path from "path";
 import ServerlessHttp from "serverless-http";
 import errorHandler from "./middlewares/errors";
-import customerRoutes from "./routes/customers";
-import foodRoutes from "./routes/foods";
+import adminReview from './routes/admin_reviews';
+import changePassword from './routes/change-password';
+import customerall from "./routes/customer_all";
+import favorites from './routes/favoritesRoutes';
+import login from "./routes/login";
+import me from "./routes/me";
+import orders from './routes/orders';
+import payment from './routes/payment';
+import productID from "./routes/productId";
+import productTypes from "./routes/productTypes";
+import productall from "./routes/product_all";
+import register from "./routes/register";
+import reviews from "./routes/reviews";
+import transfer from './routes/transfer';
+import updateProfile from './routes/update-profile';
+import upload from './routes/upload';
+import zipcode from './routes/zipcode';
+
+
+
 
 export const app = express();
+app.use(cors({
+	origin: process.env.CLIENT_ORIGIN,
+	credentials: true,
+}));
+app.use('/profiles', express.static(path.join(__dirname, 'public', 'profiles')));
+app.use('/slips', express.static(path.join(__dirname, 'public', 'slips')));
+app.use('/qrs', express.static(path.join(__dirname, 'public', 'qrs')));
+app.use('/products', express.static(path.join(__dirname, 'public/products')));
 
+
+
+
+app.use(cookieParser());
 app.use(bodyParser.json());
 
-app.use(cors());
+
+
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 export const handler = ServerlessHttp(app);
 
@@ -30,8 +66,26 @@ app.get("/", (req, res) => {
 		request: { params: req.params, query: req.query, body: req.body },
 	});
 });
+app.use(register);
+app.use(login);
+app.use(productall);
+app.use(customerall);
+app.use("/", productID);
+app.use(reviews);
+app.use(me);
+app.use(updateProfile);
+app.use(changePassword);
+app.use('/zipcode', zipcode);
+app.use(orders);
+app.use(transfer);
+app.use(payment);
+app.use(upload);
+app.use(productTypes);
+app.use('/admin/reviews', adminReview);
+app.use('/favorites', favorites);
 
-app.use(foodRoutes);
-app.use(customerRoutes);
+
+
+
 
 app.use(errorHandler);

@@ -3,10 +3,10 @@ version: '3.8'
 services:
   mysql:
     image: mysql/mysql-server:8.0
-    container_name: dev-food-db
+    container_name: project_cactus_final
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: food_db
+      MYSQL_DATABASE: cactus_db
       MYSQL_USER: host
       MYSQL_PASSWORD: host
     ports:
