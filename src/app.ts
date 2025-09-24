@@ -2,11 +2,12 @@ import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import { createPool } from "mysql2/promise";
+import { createPool, Pool, PoolConnection } from "mysql2/promise";
 import path from "path";
 import ServerlessHttp from "serverless-http";
 import errorHandler from "./middlewares/errors";
 import adminReview from './routes/admin_reviews';
+import auctions from "./routes/auctions";
 import changePassword from './routes/change-password';
 import customerall from "./routes/customer_all";
 import favorites from './routes/favoritesRoutes';
@@ -51,7 +52,7 @@ app.use(express.urlencoded({ extended: true }));
 
 export const handler = ServerlessHttp(app);
 
-export const pool = createPool({
+export const pool: Pool = createPool({
 	connectionLimit: 1,
 	host: process.env.DB_HOST,
 	port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 3306,
@@ -59,12 +60,22 @@ export const pool = createPool({
 	password: process.env.DB_PASSWORD,
 	database: process.env.DB_DATABASE,
 });
+(pool as Pool).on("connection", (conn: PoolConnection) => {
+	conn.query("SET time_zone = '+07:00'");
+});
 
 app.get("/", (req, res) => {
 	res.status(200).json({
 		status: "OK",
 		request: { params: req.params, query: req.query, body: req.body },
 	});
+});
+
+app.get("/debug/time", async (_req, res) => {
+	const [rows] = await pool.query<any[]>(
+		"SELECT NOW() AS now, @@time_zone AS session_tz, @@system_time_zone AS system_tz"
+	);
+	res.json(rows[0]);
 });
 app.use(register);
 app.use(login);
@@ -83,6 +94,7 @@ app.use(upload);
 app.use(productTypes);
 app.use('/admin/reviews', adminReview);
 app.use('/favorites', favorites);
+app.use(auctions);
 
 
 

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { NextFunction, Request, Response, Router } from "express";
 import { pool } from "../app";
 
 const router = Router();
@@ -8,42 +8,68 @@ export interface Product {
 	Pname: string;         // ชื่อสินค้า
 	Pprice: number;        // ราคาสินค้า
 	Pnumproduct: number;   // จำนวนคงเหลือ
-	Ppicture: string;      // URL ของรูปภาพ (คั่นด้วย comma ถ้ามีหลายรูป)
+	Ppicture: string;      // URL ของรูปภาพ
 	Pdetail: string;       // รายละเอียดสินค้า
 	Pstatus: string;       // สถานะสินค้า เช่น "In stock", "Out of stock"
-	Prenume: number;
-	Subtypeid: number;     // จำนวนที่ขายไปแล้ว
+	Prenume: number;       // จำนวนที่ขายไปแล้ว
+	Subtypeid: number;
 }
 
-
-
-router.get("/product", async (_req, res, next) => {
-	try {
-		const connection = await pool.getConnection();
-
+// ✅ GET /product (รองรับ filter typeid, subtypeid)
+router.get(
+	"/product",
+	async (req: Request, res: Response, next: NextFunction) => {
 		try {
-			const result = await connection.query(`
-  SELECT p.*, t.typenproduct, s.subname
-  FROM products p
-  LEFT JOIN product_types t ON p.Typeid = t.Typeid
-  LEFT JOIN subtypes s ON p.Subtypeid = s.Subtypeid
-`);
+			const connection = await pool.getConnection();
 
-			res.status(200).json(result[0]);
+			const typeidParam = req.query.typeid as string | undefined;
+			const subtypeidParam = req.query.subtypeid as string | undefined;
 
+			const typeid = typeidParam ? parseInt(typeidParam, 10) : undefined;
+			const subtypeid = subtypeidParam ? parseInt(subtypeidParam, 10) : undefined;
 
+			try {
+				let sql = `
+          SELECT p.*, t.typenproduct, s.subname
+          FROM products p
+          LEFT JOIN product_types t ON p.Typeid = t.Typeid
+          LEFT JOIN subtypes s ON p.Subtypeid = s.Subtypeid
+        `;
 
+				const params: number[] = [];
+				const conditions: string[] = [];
+
+				if (typeid !== undefined && !isNaN(typeid)) {
+					conditions.push("p.Typeid = ?");
+					params.push(typeid);
+				}
+
+				if (subtypeid !== undefined && !isNaN(subtypeid)) {
+					conditions.push("p.Subtypeid = ?");
+					params.push(subtypeid);
+				}
+
+				if (conditions.length > 0) {
+					sql += " WHERE " + conditions.join(" AND ");
+				}
+
+				sql += " ORDER BY p.Pid DESC";
+
+				const [rows] = await connection.query(sql, params);
+				res.status(200).json(rows);
+			} catch (error) {
+				next(error);
+			} finally {
+				connection.release();
+			}
 		} catch (error) {
 			next(error);
-		} finally {
-			connection.release();
 		}
-	} catch (error) {
-		next(error);
 	}
-});
+);
 
-router.delete("/product/:id", async (req, res, next) => {
+// ✅ DELETE /product/:id
+router.delete("/product/:id", async (req: Request, res: Response, next: NextFunction) => {
 	const { id } = req.params;
 	const connection = await pool.getConnection();
 
@@ -57,8 +83,20 @@ router.delete("/product/:id", async (req, res, next) => {
 	}
 });
 
-router.post('/product', async (req, res, next) => {
-	const { Pname, Pprice, Pnumproduct, Ppicture, Pdetail, Pstatus, Prenume = 0, Typeid, Subtypeid } = req.body;
+// ✅ POST /product
+router.post("/product", async (req: Request, res: Response, next: NextFunction) => {
+	const {
+		Pname,
+		Pprice,
+		Pnumproduct,
+		Ppicture,
+		Pdetail,
+		Pstatus,
+		Prenume = 0,
+		Typeid,
+		Subtypeid,
+	} = req.body;
+
 	try {
 		await pool.query(
 			`INSERT INTO products 
@@ -66,27 +104,23 @@ router.post('/product', async (req, res, next) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[Pname, Pprice, Pnumproduct, Ppicture, Pdetail, Pstatus, Prenume, Typeid, Subtypeid]
 		);
-		res.status(201).json({ message: 'เพิ่มสินค้าสำเร็จ' });
+		res.status(201).json({ message: "เพิ่มสินค้าสำเร็จ" });
 	} catch (err) {
 		next(err);
 	}
 });
 
-router.get('/product/latest', async (req, res) => {
+// ✅ GET /product/latest
+router.get("/product/latest", async (_req: Request, res: Response) => {
 	try {
 		const [rows] = await pool.query(
-			'SELECT * FROM products ORDER BY Pid DESC LIMIT 10'
+			"SELECT * FROM products ORDER BY Pid DESC LIMIT 10"
 		);
 		res.json(rows);
 	} catch (err) {
-		console.error('Error fetching latest products:', err);
-		res.status(500).json({ error: 'Internal Server Error' });
+		console.error("Error fetching latest products:", err);
+		res.status(500).json({ error: "Internal Server Error" });
 	}
 });
-
-
-
-
-
 
 export default router;

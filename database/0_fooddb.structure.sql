@@ -32,8 +32,25 @@ CREATE TABLE `auction_products` (
   `PROrenume` int DEFAULT NULL,
   `PROstatus` varchar(50) DEFAULT NULL,
   `PROpicture` varchar(255) DEFAULT NULL,
+  `PROdetail` text,
   PRIMARY KEY (`PROid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DROP TABLE IF EXISTS `auctions`;
+CREATE TABLE `auctions` (
+  `Aid` int NOT NULL AUTO_INCREMENT,
+  `PROid` int NOT NULL,
+  `start_price` decimal(10,2) NOT NULL,
+  `current_price` decimal(10,2) NOT NULL,
+  `end_time` datetime NOT NULL,
+  `winner_id` int DEFAULT NULL,
+  `status` enum('open','closed') DEFAULT 'open',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`Aid`),
+  UNIQUE KEY `ux_auctions_one_active_per_product` (`PROid`),
+  CONSTRAINT `auctions_ibfk_1` FOREIGN KEY (`PROid`) REFERENCES `auction_products` (`PROid`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `customers`;
 CREATE TABLE `customers` (
@@ -45,13 +62,23 @@ CREATE TABLE `customers` (
   `Cphone` varchar(15) DEFAULT NULL,
   `Cstatus` varchar(50) DEFAULT NULL,
   `Cdate` date DEFAULT NULL,
+  `Cprofile` varchar(255) DEFAULT NULL,
   `Cbirth` date DEFAULT NULL,
   `Csubdistrict` varchar(100) DEFAULT NULL,
   `Cdistrict` varchar(100) DEFAULT NULL,
   `Cprovince` varchar(100) DEFAULT NULL,
   `Czipcode` varchar(10) DEFAULT NULL,
   PRIMARY KEY (`Cid`)
-) ENGINE=InnoDB AUTO_INCREMENT=14 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DROP TABLE IF EXISTS `favorites`;
+CREATE TABLE `favorites` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `customer_id` int DEFAULT NULL,
+  `product_id` int DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=31 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `order_items`;
 CREATE TABLE `order_items` (
@@ -65,7 +92,7 @@ CREATE TABLE `order_items` (
   KEY `Pid` (`Pid`),
   CONSTRAINT `order_items_ibfk_1` FOREIGN KEY (`Oid`) REFERENCES `orders` (`Oid`) ON DELETE CASCADE,
   CONSTRAINT `order_items_ibfk_2` FOREIGN KEY (`Pid`) REFERENCES `products` (`Pid`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=40 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=106 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `orders`;
 CREATE TABLE `orders` (
@@ -74,8 +101,10 @@ CREATE TABLE `orders` (
   `Odate` date DEFAULT NULL,
   `Ostatus` varchar(50) DEFAULT NULL,
   `Cid` int DEFAULT NULL,
+  `Oslip` varchar(255) DEFAULT NULL,
+  `Opayment` varchar(20) DEFAULT 'bank',
   PRIMARY KEY (`Oid`)
-) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=45 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `payments`;
 CREATE TABLE `payments` (
@@ -85,17 +114,18 @@ CREATE TABLE `payments` (
   `Paydate` datetime DEFAULT CURRENT_TIMESTAMP,
   `Paystatus` varchar(50) DEFAULT 'waiting',
   `SlipUrl` text,
+  `Tid` int DEFAULT NULL,
   PRIMARY KEY (`Payid`),
   KEY `Oid` (`Oid`),
   CONSTRAINT `payments_ibfk_1` FOREIGN KEY (`Oid`) REFERENCES `orders` (`Oid`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `product_types`;
 CREATE TABLE `product_types` (
   `Typeid` int NOT NULL AUTO_INCREMENT,
   `typenproduct` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`Typeid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `products`;
 CREATE TABLE `products` (
@@ -107,8 +137,12 @@ CREATE TABLE `products` (
   `Pstatus` varchar(50) DEFAULT NULL,
   `Ppicture` varchar(255) DEFAULT NULL,
   `Pdetail` text,
-  PRIMARY KEY (`Pid`)
-) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `Typeid` int DEFAULT NULL,
+  `Subtypeid` int DEFAULT NULL,
+  PRIMARY KEY (`Pid`),
+  KEY `fk_typeid` (`Typeid`),
+  CONSTRAINT `fk_typeid` FOREIGN KEY (`Typeid`) REFERENCES `product_types` (`Typeid`)
+) ENGINE=InnoDB AUTO_INCREMENT=31 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `questions`;
 CREATE TABLE `questions` (
@@ -141,9 +175,12 @@ CREATE TABLE `reviews` (
   `text` text NOT NULL,
   `stars` int NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `order_id` int NOT NULL,
   PRIMARY KEY (`id`),
+  KEY `fk_review_order` (`order_id`),
+  CONSTRAINT `fk_review_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`Oid`) ON DELETE CASCADE,
   CONSTRAINT `reviews_chk_1` CHECK ((`stars` between 1 and 5))
-) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `sales`;
 CREATE TABLE `sales` (
@@ -152,6 +189,27 @@ CREATE TABLE `sales` (
   `Tnum` int DEFAULT NULL,
   `Taccount` varchar(255) DEFAULT NULL,
   `Tbranch` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`Tid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DROP TABLE IF EXISTS `subtypes`;
+CREATE TABLE `subtypes` (
+  `Subtypeid` int NOT NULL AUTO_INCREMENT,
+  `subname` varchar(100) NOT NULL,
+  `Typeid` int DEFAULT NULL,
+  PRIMARY KEY (`Subtypeid`),
+  KEY `Typeid` (`Typeid`),
+  CONSTRAINT `subtypes_ibfk_1` FOREIGN KEY (`Typeid`) REFERENCES `product_types` (`Typeid`)
+) ENGINE=InnoDB AUTO_INCREMENT=28 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DROP TABLE IF EXISTS `transfer`;
+CREATE TABLE `transfer` (
+  `Tid` int NOT NULL,
+  `Tname` varchar(100) NOT NULL,
+  `Tnum` varchar(50) NOT NULL,
+  `Taccount` varchar(150) NOT NULL,
+  `Tbranch` varchar(100) DEFAULT NULL,
+  `Tqr` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`Tid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -165,135 +223,204 @@ CREATE TABLE `users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
-
-
-
-INSERT INTO `customers` (`Cid`, `Cname`, `Caddress`, `Cusername`, `Cpassword`, `Cphone`, `Cstatus`, `Cdate`, `Cbirth`, `Csubdistrict`, `Cdistrict`, `Cprovince`, `Czipcode`) VALUES
-(1, 'Jane Smith', '456 Elm Street, Townsville', 'janesmith456', 'pass456', '555-5678', 'Inactive', '2023-07-20', '1985-10-20', NULL, NULL, NULL, NULL);
-INSERT INTO `customers` (`Cid`, `Cname`, `Caddress`, `Cusername`, `Cpassword`, `Cphone`, `Cstatus`, `Cdate`, `Cbirth`, `Csubdistrict`, `Cdistrict`, `Cprovince`, `Czipcode`) VALUES
-(3, 'ตะเอ๊ง ตัวจริง', NULL, 'tuaeeng123', '$2a$10$50Tvk6Lrt4LMrfzy/VE.7e4LU5j56JAfxkDhGbp2bWXCxq10U7g9.', NULL, 'user', NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT INTO `customers` (`Cid`, `Cname`, `Caddress`, `Cusername`, `Cpassword`, `Cphone`, `Cstatus`, `Cdate`, `Cbirth`, `Csubdistrict`, `Cdistrict`, `Cprovince`, `Czipcode`) VALUES
-(4, 'John Doe', NULL, 'johndoe123', '$2a$10$myFyhGN1ZwUlF43DeuL1JOpcc.xd1GbKD1F8UjofpoFexdhxiw8ze', NULL, 'user', NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT INTO `customers` (`Cid`, `Cname`, `Caddress`, `Cusername`, `Cpassword`, `Cphone`, `Cstatus`, `Cdate`, `Cbirth`, `Csubdistrict`, `Cdistrict`, `Cprovince`, `Czipcode`) VALUES
-(5, 'จินดา วงศ์', '33/8', 'lipid23', '$2a$10$k4wP2G7Xw0tTkq1.n/ZVUeoyAQK.MG4S0SU5QP13PF4DXR0dXBWXK', '0866658246', 'user', NULL, NULL, 'บ้านใหม่', 'ปากเกร็ด', 'นนทบุรี', '11120'),
-(6, 'ฟฟฟฟ กกกก', NULL, 'liw844@gmail.com', '$2a$10$LYWmHSfA5dlWPL7mHU0/PO3zT.VWFMtv.ltXSFOc8S4REhHQDKVCK', NULL, 'user', NULL, NULL, NULL, NULL, NULL, NULL),
-(7, 'นายนนกุล พิกุล', '212', 'นนกุล2544', '$2a$10$hf/P5lUwTsqu4jyGSFiUHO/SyIvxDCI0SCpPJpG6ObW/X4LkHQdMi', '0915682497', 'user', NULL, NULL, 'แพ้ว', 'บ้านย่า', 'กทม', '11120'),
-(8, 'งูจงเห่า', '137 หมู่ล่ำซำ บ้านข่า ชัยภูมิ 36170', 'zzzzz', '$2a$10$RaKa5BkBf766G/Sl3/arLu.E.Phza18nTAsIKVtc8Ce8aCZsfBKL2', '0981234567', 'user', '2025-06-09', '2001-11-22', NULL, NULL, NULL, NULL),
-(9, 'ตะเอ๊ง ตัวจริง', '137 หมู่ 4 บ้านข่า', 'eng123', '$2a$10$g./5Ri//4HTW1ytEbxwxa.JtR1I0eSeW5cB6aDer9pK6BIPWOcwdS', '0981234567', 'user', '2025-06-09', '2000-01-03', 'บ้านข่า', 'เกษตรสมบูรณ์', 'ชัยภูมิ', '36160'),
-(10, 'หนูเภา วิ', '137 หมู่ 4 บ้านข่า', 'eng1234', '$2a$10$Fby0S1.XiqF153AD39NVNewmD7N2CNQVHu.Vw/CBmOIgDknlWymQO', '0981234567', 'user', '2025-06-09', '2000-01-03', 'บ้านข่า', 'เกษตรสมบูรณ์', 'ชัยภูมิ', '36160'),
-(11, 'ทิวธวัฒน์ สมอุ่มจาน', '123/45 หมู่บ้านตัวอย่าง', 'tiwthawat@example.com', '$2a$10$z1weqUnMXr6RoAodobN6ZutKW/HFZI9al2sEsUnnYFlCINAb.sJEK', '0912345678', 'user', '2025-06-17', '2001-08-15', 'บางพูด', 'ปากเกร็ด', 'นนทบุรี', '11120'),
-(12, 'นายทิวา วา', '555', 'tiwa20', '$2a$10$NA6MQjTN8vWjmNpfx.RNN.N35PCATshg5Yeq9L.o8zvp/QWqSqpVS', '0981111111', 'user', '2025-06-17', '2001-02-12', 'ลุ่มปลาเฒ่า', 'บ้านเขว้า', 'ชัยภูมิ', '36170'),
-(13, 'ทิวธวัฒน์ อุ่มจาน', '123/45 หมู่บ้านตัวอย่าง', 'tiwthawat', '$2a$10$SlahV4l4IDRvX3o09xZ17eeR/Lq/Zv6C5o9QsFcGAyXcVU3QFShCy', '0912345678', 'user', '2025-06-18', '2001-08-15', 'บางพูด', 'ปากเกร็ด', 'นนทบุรี', '11120');
-
+INSERT INTO `auction_products` (`PROid`, `PROname`, `PROprice`, `PROrenume`, `PROstatus`, `PROpicture`, `PROdetail`) VALUES
+(9, 'หหหห', '20.00', NULL, 'auction', '/products/1758558843206-475982227.jpeg,/products/1758558843217-492047242.jpg,/products/1758558843275-660333590.webp', NULL),
+(10, 'ผผผผ', '25.00', NULL, 'auction', '/products/1758561722920-407603559.png,/products/1758561722935-883631298.png,/products/1758561723000-787542678.png,/products/1758561723075-439334130.png', NULL),
+(11, 'aaaa', '250.00', NULL, 'auction', '/products/1758564913725-9173106.webp,/products/1758564913734-656638037.png,/products/1758564913794-570876958.png,/products/1758564913853-326676278.jpg,/products/1758564913911-738468282.png', NULL),
+(12, 'cccc', '50.00', NULL, 'auction', '/products/1758566863003-903238771.jpg,/products/1758566863012-278416116.webp,/products/1758566863072-140158070.png,/products/1758566863133-455311306.png', NULL),
+(13, 'mmmm', '40.00', NULL, 'auction', '/products/1758567643526-320781761.jpeg,/products/1758567643533-901072762.jpg,/products/1758567643588-197666879.webp,/products/1758567643650-603381856.png,/products/1758567643724-913724046.png,/products/1758567643778-940422450.jpg', NULL),
+(14, 'ddddd', '50.00', NULL, 'auction', '/products/1758567927579-613178884.png,/products/1758567927589-558179907.png,/products/1758567927600-299726589.jpg,/products/1758567927607-806415766.png,/products/1758567927658-992347967.png,/products/1758567927720-926874455.png', NULL),
+(15, 'bbbb', '100.00', NULL, 'auction', '/products/1758567990679-907570526.jpg,/products/1758567990686-328761725.png,/products/1758567990750-801618494.png,/products/1758567990762-706942960.png,/products/1758567990772-563488428.png', NULL),
+(16, 'ppppp', '250.00', NULL, 'auction', '/products/1758569338648-528101750.jpg,/products/1758569338660-122090109.png,/products/1758569338720-30641723.png,/products/1758569338779-839506308.png', 'ก็ไม่รู้');
+INSERT INTO `auctions` (`Aid`, `PROid`, `start_price`, `current_price`, `end_time`, `winner_id`, `status`, `created_at`, `updated_at`) VALUES
+(13, 10, '50.00', '50.00', '2025-09-25 01:11:00', NULL, 'open', '2025-09-23 01:11:44', '2025-09-23 01:11:44'),
+(14, 9, '60.00', '60.00', '2025-09-28 01:12:00', NULL, 'open', '2025-09-23 01:12:14', '2025-09-23 01:12:14'),
+(16, 11, '70.00', '70.00', '2025-09-23 01:44:00', NULL, 'closed', '2025-09-23 01:42:47', '2025-09-23 01:44:12'),
+(19, 12, '700.00', '700.00', '2025-09-23 02:00:00', NULL, 'closed', '2025-09-23 01:48:07', '2025-09-23 02:00:20'),
+(20, 13, '300.00', '300.00', '2025-09-23 02:03:00', NULL, 'closed', '2025-09-23 02:01:28', '2025-09-23 02:03:00');
+INSERT INTO `customers` (`Cid`, `Cname`, `Caddress`, `Cusername`, `Cpassword`, `Cphone`, `Cstatus`, `Cdate`, `Cprofile`, `Cbirth`, `Csubdistrict`, `Cdistrict`, `Cprovince`, `Czipcode`) VALUES
+(1, 'Jane Smith', '456 Elm Street, Townsville', 'janesmith456', 'pass456', '555-5678', 'deleted', '2023-07-20', NULL, '1985-10-20', NULL, NULL, NULL, NULL),
+(5, 'จินดา วงศ์', '33/8', 'lipid23', '$2a$10$k4wP2G7Xw0tTkq1.n/ZVUeoyAQK.MG4S0SU5QP13PF4DXR0dXBWXK', '0866658246', 'user', NULL, NULL, NULL, 'บ้านใหม่', 'ปากเกร็ด', 'นนทบุรี', '11120'),
+(7, 'นายนนกุล พิกุล', '212', 'นนกุล2544', '$2a$10$hf/P5lUwTsqu4jyGSFiUHO/SyIvxDCI0SCpPJpG6ObW/X4LkHQdMi', '0915682497', 'user', NULL, NULL, NULL, 'แพ้ว', 'บ้านย่า', 'กทม', '11120'),
+(8, 'งูจงเห่า', '137 หมู่ล่ำซำ บ้านข่า ชัยภูมิ 36170', 'zzzzz', '$2a$10$RaKa5BkBf766G/Sl3/arLu.E.Phza18nTAsIKVtc8Ce8aCZsfBKL2', '0981234567', 'deleted', '2025-06-09', NULL, '2001-11-22', NULL, NULL, NULL, NULL),
+(9, 'ตะเอ๊ง ตัวจริง', '137 หมู่ 4 บ้านข่า', 'eng123', '$2a$10$g./5Ri//4HTW1ytEbxwxa.JtR1I0eSeW5cB6aDer9pK6BIPWOcwdS', '0981234567', 'user', '2025-06-09', NULL, '2000-01-03', 'บ้านข่า', 'เกษตรสมบูรณ์', 'ชัยภูมิ', '36160'),
+(10, 'หนูเภา วิ', '137 หมู่ 4 บ้านข่า', 'eng1234', '$2a$10$Fby0S1.XiqF153AD39NVNewmD7N2CNQVHu.Vw/CBmOIgDknlWymQO', '0981234567', 'banned', '2025-06-09', NULL, '2000-01-03', 'บ้านข่า', 'เกษตรสมบูรณ์', 'ชัยภูมิ', '36160'),
+(11, 'ทิวธวัฒน์ สมอุ่มจาน', '123/45 หมู่บ้านตัวอย่าง', 'tiwthawat@example.com', '$2a$10$z1weqUnMXr6RoAodobN6ZutKW/HFZI9al2sEsUnnYFlCINAb.sJEK', '0912345678', 'user', '2025-06-17', NULL, '2001-08-15', 'บางพูด', 'ปากเกร็ด', 'นนทบุรี', '11120'),
+(12, 'นายทิวา วา', '555', 'tiwa20', '$2a$10$NA6MQjTN8vWjmNpfx.RNN.N35PCATshg5Yeq9L.o8zvp/QWqSqpVS', '0981111111', 'user', '2025-06-17', NULL, '2001-02-12', 'ลุ่มปลาเฒ่า', 'บ้านเขว้า', 'ชัยภูมิ', '36170'),
+(13, 'ทิวธวัฒน์ อุ่มจาน', '123/45 หมู่บ้านตัวอย่าง', 'tiwthawat', '$2a$10$SlahV4l4IDRvX3o09xZ17eeR/Lq/Zv6C5o9QsFcGAyXcVU3QFShCy', '0912345678', 'user', '2025-06-18', NULL, '2001-08-15', 'บางพูด', 'ปากเกร็ด', 'นนทบุรี', '11120'),
+(14, 'อังกะลุง มาเช่', '222', 'polilo', '$2a$10$QugjUImjkj41xprIWS2XK.zJh5fKeCnBNUQwjxym632unZHKWetau', '0951245876', 'user', '2025-07-02', NULL, '1999-09-21', 'ชะอำ', 'ชะอำ', 'เพชรบุรี', '76120'),
+(15, 'ทิวธวัฒน์ สสมอุ่มจาน', '225', 'tiwwatad', '$2a$10$yRW9oK4HjT5pBEc6F1EDW.P2CLC2Y/OyB7NtD1KR1KzBwrQ71QIQq', '0869994758', 'user', '2025-07-02', '1751493452090-851805195.jpg', '2001-12-15', 'ปากเกร็ด', 'ปากเกร็ด', 'นนทบุรี', '11120');
+INSERT INTO `favorites` (`id`, `customer_id`, `product_id`, `created_at`) VALUES
+(6, 5, 20, '2025-06-30 01:21:53'),
+(7, 5, 21, '2025-06-30 01:21:54'),
+(10, 5, 13, '2025-06-30 01:26:31'),
+(14, 5, 15, '2025-06-30 01:55:40'),
+(15, 5, 18, '2025-06-30 01:55:42'),
+(19, 15, 21, '2025-07-02 23:22:00'),
+(20, 15, 20, '2025-07-02 23:22:01'),
+(21, 15, 12, '2025-07-02 23:22:02'),
+(22, 15, 13, '2025-07-02 23:22:04'),
+(24, 15, 19, '2025-07-02 23:22:08'),
+(25, 15, 18, '2025-07-02 23:25:43'),
+(28, 15, 30, '2025-09-21 14:53:54'),
+(29, 15, 29, '2025-09-21 15:24:24'),
+(30, 15, 27, '2025-09-21 15:24:26');
 INSERT INTO `order_items` (`Oiid`, `Oid`, `Pid`, `Oquantity`, `Oprice`) VALUES
-(1, 1, 1, 2, '100.00');
-INSERT INTO `order_items` (`Oiid`, `Oid`, `Pid`, `Oquantity`, `Oprice`) VALUES
-(2, 1, 2, 1, '250.00');
-INSERT INTO `order_items` (`Oiid`, `Oid`, `Pid`, `Oquantity`, `Oprice`) VALUES
-(3, 2, 1, 2, '100.00');
-INSERT INTO `order_items` (`Oiid`, `Oid`, `Pid`, `Oquantity`, `Oprice`) VALUES
-(4, 2, 3, 1, '250.00'),
-(5, 3, 1, 2, '100.00'),
-(6, 3, 3, 1, '250.00'),
-(7, 4, 1, 2, '100.00'),
-(8, 4, 3, 1, '250.00'),
-(9, 5, 1, 2, '100.00'),
-(10, 5, 3, 1, '250.00'),
-(11, 6, 5, 2, '50.00'),
-(12, 6, 4, 9, '50.00'),
-(13, 6, 3, 4, '50.00'),
-(14, 7, 3, 2, '50.00'),
-(15, 7, 2, 3, '50.00'),
-(16, 7, 9, 1, '70.00'),
-(17, 8, 2, 1, '50.00'),
-(18, 8, 8, 2, '70.00'),
-(19, 8, 4, 1, '50.00'),
-(20, 8, 10, 2, '70.00'),
-(21, 9, 2, 2, '50.00'),
-(22, 9, 7, 2, '70.00'),
-(23, 10, 2, 2, '50.00'),
-(24, 10, 9, 2, '70.00'),
-(25, 10, 7, 1, '70.00'),
-(26, 10, 6, 3, '70.00'),
-(27, 11, 3, 2, '50.00'),
-(28, 11, 9, 3, '70.00'),
-(29, 11, 10, 1, '70.00'),
-(30, 11, 6, 2, '70.00'),
-(31, 11, 5, 1, '50.00'),
-(32, 12, 2, 1, '50.00'),
-(33, 12, 6, 4, '70.00'),
-(34, 13, 2, 2, '50.00'),
-(35, 13, 9, 3, '70.00'),
-(36, 13, 10, 2, '70.00'),
-(37, 14, 1, 3, '50.00'),
-(38, 14, 9, 1, '70.00'),
-(39, 14, 7, 3, '70.00');
+(69, 27, 13, 2, '45.00'),
+(70, 27, 15, 2, '56.50'),
+(71, 28, 21, 1, '65.00'),
+(72, 28, 13, 2, '45.00'),
+(73, 28, 18, 1, '65.00'),
+(74, 29, 15, 1, '56.50'),
+(75, 29, 13, 2, '45.00'),
+(76, 30, 13, 3, '45.00'),
+(77, 30, 18, 3, '65.00'),
+(78, 30, 19, 1, '75.00'),
+(79, 31, 13, 2, '45.00'),
+(80, 31, 18, 1, '65.00'),
+(81, 32, 15, 2, '56.50'),
+(82, 32, 21, 7, '65.00'),
+(83, 33, 18, 1, '65.00'),
+(84, 33, 19, 3, '75.00'),
+(85, 34, 18, 1, '65.00'),
+(86, 35, 15, 4, '56.50'),
+(87, 35, 18, 11, '65.00'),
+(88, 35, 19, 1, '75.00'),
+(89, 36, 13, 1, '45.00'),
+(90, 37, 13, 1, '45.00'),
+(91, 38, 15, 1, '56.50'),
+(92, 39, 15, 1, '56.50'),
+(93, 40, 15, 4, '56.50'),
+(94, 40, 19, 1, '75.00'),
+(95, 41, 18, 4, '65.00'),
+(96, 41, 13, 1, '45.00'),
+(97, 41, 21, 1, '65.00'),
+(98, 42, 13, 4, '45.00'),
+(99, 42, 15, 1, '56.50'),
+(100, 42, 12, 1, '35.00'),
+(101, 42, 20, 1, '55.00'),
+(102, 42, 18, 1, '65.00'),
+(103, 42, 21, 1, '65.00'),
+(104, 43, 15, 1, '56.50'),
+(105, 44, 28, 1, '65.00');
+INSERT INTO `orders` (`Oid`, `Oprice`, `Odate`, `Ostatus`, `Cid`, `Oslip`, `Opayment`) VALUES
+(1, '450.00', '2025-06-19', 'pending', 1, NULL, 'bank'),
+(2, '450.00', '2025-06-19', 'pending', 1, NULL, 'bank'),
+(3, '450.00', '2025-06-19', 'pending', 1, NULL, 'bank'),
+(4, '450.00', '2025-06-19', 'pending', 1, NULL, 'bank'),
+(5, '450.00', '2025-06-19', 'pending', 12, NULL, 'bank'),
+(6, '750.00', '2025-06-19', 'cancelled', 5, NULL, 'bank'),
+(7, '320.00', '2025-06-19', 'cancelled', 5, NULL, 'bank'),
+(8, '380.00', '2025-06-19', 'cancelled', 5, NULL, 'bank'),
+(9, '240.00', '2025-06-19', 'cancelled', 5, NULL, 'bank'),
+(10, '520.00', '2025-06-19', 'cancelled', 5, NULL, 'bank'),
+(11, '570.00', '2025-06-20', 'cancelled', 5, NULL, 'bank'),
+(12, '330.00', '2025-06-20', 'cancelled', 5, NULL, 'bank'),
+(13, '450.00', '2025-06-20', 'cancelled', 5, NULL, 'bank'),
+(14, '430.00', '2025-06-20', 'waiting', 5, NULL, 'bank'),
+(15, '200.00', '2025-06-21', 'waiting', 5, NULL, 'bank'),
+(16, '660.00', '2025-06-21', 'waiting', 5, NULL, 'bank'),
+(17, '510.00', '2025-06-21', 'waiting', 5, NULL, 'bank'),
+(18, '740.00', '2025-06-21', 'waiting', 5, 'http://localhost:3000/uploads/test-slip.jpg', 'bank'),
+(19, '70.00', '2025-06-21', 'waiting', 5, NULL, 'bank'),
+(20, '260.00', '2025-06-21', 'waiting', 5, '/slips/1750542455448-188087695.jpg', 'bank'),
+(21, '310.00', '2025-06-21', 'waiting', 5, '/slips/1750543092104-495853990.png', 'bank'),
+(22, '50.00', '2025-06-21', 'cancelled', 5, NULL, 'bank'),
+(23, '530.00', '2025-06-21', 'waiting', 5, '/slips/1750544595253-881636319.jpg', 'bank'),
+(24, '50.00', '2025-06-21', 'paid', 5, '/slips/1750545709186-411671142.jpg', 'bank'),
+(25, '600.00', '2025-06-21', 'failed', 5, '/slips/1750546874037-145015920.jpg', 'bank'),
+(26, '310.00', '2025-06-24', 'refunded', 5, '/slips/1750798364992-334244721.jpg', 'bank'),
+(27, '203.00', '2025-06-25', 'paid', 5, '/slips/1750814542759-390508319.png', 'bank'),
+(28, '220.00', '2025-06-27', 'cancelled', 5, NULL, NULL),
+(29, '146.50', '2025-06-27', 'cancelled', 5, NULL, 'transfer'),
+(30, '405.00', '2025-06-27', 'shipped', 5, NULL, 'cod'),
+(31, '155.00', '2025-06-27', 'shipped', 5, NULL, 'cod'),
+(32, '568.00', '2025-06-29', 'shipped', 5, NULL, 'cod'),
+(33, '290.00', '2025-06-29', 'delivered', 5, '/slips/1751237875638-577669543.jpg', 'transfer'),
+(34, '65.00', '2025-06-30', 'delivered', 5, NULL, 'cod'),
+(35, '1016.00', '2025-07-02', 'waiting', 15, '/slips/1751496516970-660939988.png', 'transfer'),
+(36, '45.00', '2025-07-02', 'waiting', 15, '/slips/1751496602199-936882596.png', 'transfer'),
+(37, '45.00', '2025-07-02', 'shipped', 15, NULL, 'cod'),
+(38, '56.50', '2025-07-02', 'cancelled', 15, NULL, 'transfer'),
+(39, '56.50', '2025-07-02', 'cancelled', 15, NULL, 'transfer'),
+(40, '301.00', '2025-07-02', 'cancelled', 15, NULL, 'transfer'),
+(41, '370.00', '2025-07-02', 'cancelled', 15, NULL, 'transfer'),
+(42, '506.50', '2025-07-02', 'paid', 15, '/slips/1751497819073-156330693.png', 'transfer'),
+(43, '106.50', '2025-07-02', 'paid', 15, '/slips/1751497869386-562504404.png', 'transfer'),
+(44, '115.00', '2025-09-21', 'shipped', 15, NULL, 'cod');
+INSERT INTO `payments` (`Payid`, `Oid`, `Payprice`, `Paydate`, `Paystatus`, `SlipUrl`, `Tid`) VALUES
+(1, 4, '450.00', '2025-06-19 23:30:33', 'waiting', '/slips/1750375833640-248522693.jpg', NULL),
+(2, 10, '520.00', '2025-06-19 23:45:29', 'waiting', '/slips/1750376729849-982801340.jpg', NULL),
+(3, 11, '570.00', '2025-06-20 00:12:16', 'waiting', '/slips/1750378336062-718549742.jpg', NULL),
+(4, 12, '330.00', '2025-06-20 00:16:00', 'waiting', '/slips/1750378560444-919985367.jpg', NULL),
+(5, 13, '450.00', '2025-06-20 00:35:59', 'waiting', '/slips/1750379759547-86134413.jpg', NULL),
+(6, 14, '430.00', '2025-06-20 00:42:24', 'waiting', '/slips/1750380144481-143919309.jpg', NULL),
+(7, 15, '200.00', '2025-06-21 21:01:28', 'waiting', '/slips/1750539688784-724215328.png', NULL),
+(8, 16, '660.00', '2025-06-21 21:12:19', 'waiting', '/slips/1750540339854-255459634.png', NULL),
+(9, 17, '510.00', '2025-06-21 21:15:01', 'waiting', '/slips/1750540501571-816619128.jpg', NULL),
+(10, 18, '740.00', '2025-06-21 21:25:08', 'waiting', '/slips/1750541108331-786407796.png', NULL),
+(11, 19, '70.00', '2025-06-21 21:35:19', 'waiting', '/slips/1750541719362-673317622.jpg', NULL),
+(12, 20, '260.00', '2025-06-21 21:47:35', 'waiting', '/slips/1750542455448-188087695.jpg', NULL),
+(13, 21, '310.00', '2025-06-21 21:58:12', 'waiting', '/slips/1750543092104-495853990.png', NULL),
+(14, 23, '530.00', '2025-06-21 22:23:15', 'waiting', '/slips/1750544595253-881636319.jpg', NULL),
+(15, 24, '50.00', '2025-06-21 22:41:49', 'waiting', '/slips/1750545709186-411671142.jpg', 2),
+(16, 25, '600.00', '2025-06-21 23:01:14', 'waiting', '/slips/1750546874037-145015920.jpg', 1),
+(17, 26, '310.00', '2025-06-24 20:52:45', 'waiting', '/slips/1750798364992-334244721.jpg', 2),
+(18, 27, '203.00', '2025-06-25 01:22:22', 'waiting', '/slips/1750814542759-390508319.png', 1),
+(19, 33, '290.00', '2025-06-29 22:57:55', 'waiting', '/slips/1751237875638-577669543.jpg', 1),
+(20, 35, '1016.00', '2025-07-02 22:48:37', 'waiting', '/slips/1751496516970-660939988.png', 2),
+(21, 36, '45.00', '2025-07-02 22:50:02', 'waiting', '/slips/1751496602199-936882596.png', 2),
+(22, 42, '506.50', '2025-07-02 23:10:19', 'waiting', '/slips/1751497819073-156330693.png', 2),
+(23, 43, '106.50', '2025-07-02 23:11:09', 'waiting', '/slips/1751497869386-562504404.png', 1);
+INSERT INTO `product_types` (`Typeid`, `typenproduct`) VALUES
+(1, 'แคคตัสหนามสั้น'),
+(2, 'แคคตัสหนามยาว'),
+(3, 'ไม้อวบน้ำ'),
+(4, 'ของตกแต่งกระถาง');
+INSERT INTO `products` (`Pid`, `Pname`, `Pprice`, `Pnumproduct`, `Prenume`, `Pstatus`, `Ppicture`, `Pdetail`, `Typeid`, `Subtypeid`) VALUES
+(12, 'แอสโตรไฟตัม', '35.00', 25, 0, 'In stock', '/products/1750809450409-993234194.png', 'แอสโตรไฟตัม (Sand Dollar Cactus) หรือเรียกสั้น ๆ ว่า แอสโตร (Astro) มีชื่อวิทยาศาสตร์ว่า Astrophytum Asterias (Zucc.) Lem. มีต้นกำเนิดมาจากแถบอเมริกากลาง ลักษณะลำต้นกลม มีพู 5-13 พู สีเขียวเข้ม ผิวเรียบ มีจุดหรือดอทสีขาว และมีขนสีขาวปกคลุมแต่ละตุ่มเนินหนาม เมื่ออายุได้ปีกว่า ๆ จะเริ่มออกดอก โดยดอกมีสีเหลืองหรือสีส้มอมแดง ออกดอกได้ตลอดทั้งปี โดยเฉพาะช่วงหน้าร้อน นิยมขยายพันธุ์ด้วยการเพาะเมล็ด ชอบดินร่วนปนทราย ชอบน้ำน้อยถึงปานกลาง ชอบแสงแดดจัด และทนแล้งได้ดี', 1, 2),
+(13, 'แมมมิลลาเรีย พลูโมซา (แมมขนนก)', '45.00', 50, 0, 'In stock', '/products/1750809952095-571706861.png', 'แมมมิลลาเรีย พลูโมซา หรือที่รู้จักในชื่อ แมมขนนก (Feather Cactus) มีชื่อวิทยาศาสตร์ว่า Mammillaria Plumosa F.A.C.Weber ต้นกำเนิดมาจากแถบอเมริกากลาง ลักษณะลำต้นเป็นทรงกลม มีพูแต่มองเห็นไม่ชัด มีหนามอ่อนสีขาวอ่อนรอบต้นคล้ายพู่ขนนก ดอกมีสีขาวอมเหลืองหรือสีชมพู มักออกดอกช่วงฤดูหนาว นิยมขยายพันธุ์ด้วยการเพาะเมล็ดและปักชำ ชอบดินร่วนปนทราย ชอบน้ำน้อยถึงปานกลาง ชอบแสงแดด และทนแล้งได้ดี', 1, 3),
+(15, 'แมมมิลลาเรีย เพอร์เบลลา (แมมนกฮูก)', '56.50', 38, 0, 'In stock', '/products/1750813644181-619194447.png', 'แมมมิลลาเรีย เพอร์เบลลา หรือเรียกสั้น ๆ ว่า แมมนกฮูก (Owl Eye Cactus) มีชื่อวิทยาศาสตร์ว่า Mammillaria Perbella Hildmann ex K. Schumann มีต้นกำเนิดมาจากประเทศเม็กซิโก ลำต้นทรงกลมมน หนามสั้นสีขาว เรียงตัวเป็นระเบียบ มองดูสวยงาม เมื่อโตขึ้นจะแตกหน่อเป็น 2 ยอดลักษณะคล้ายตานกฮูก มีดอกสีชมพูอมม่วง เมื่อออกดอกพร้อมกันจะเรียงตัวรอบ ๆ ต้นลักษณะคล้ายมงกุฎ นิยมขยายพันธุ์ด้วยการเพาะเมล็ดและตัดกิ่ง ชอบดินที่อุดมไปด้วยแร่ธาตุและระบายน้ำดี ชอบแสงแดดจัดเต็มวัน ทนแล้งได้ดี ไม่ต้องการน้ำมาก บำรุงด้วยปุ๋ยที่มีโพแทสเซียมสูงในช่วงฤดูร้อน', 1, 3),
+(18, 'ตะบองผู้เฒ่า (แมมพ่อเฒ่า)', '65.00', 35, 0, 'In stock', '/products/1750970119607-222220298.png', 'ตะบองพ่อเฒ่า หรือ แมมพ่อเฒ่า (Old Man Cactus) มีชื่อวิทยาศาสตร์ว่า Cephalocereus Senilis (Haw.) Pfeiff. ต้นกำเนิดมาจากประเทศเม็กซิโก เป็นไม้อวบน้ำอายุหลายปี อาจสูงได้ถึง 15 เมตร ลำต้นเป็นทรงกระบอก มี 20-30 พู สีเขียวเข้มสวย มีขนสีขาวและหนามกลางสีเหลืองอ่อนปกคลุมทั่วลำต้น มีดอกไม้สีขาวอมชมพู แต่ออกดอกยาก ส่วนใหญ่นิยมขยายพันธุ์ด้วยเพาะเมล็ด มักจะปลูกเป็นไม้กระถางในอาคาร ชอบดินร่วนปนทราย ชอบน้ำน้อย และชอบแสงแดดจัด', 3, 21),
+(19, 'ถังทอง', '75.00', 65, 0, 'In stock', '/products/1750970256295-503485795.png', 'ถังทอง (Golden Barrel Cactus) มีชื่อวิทยาศาสตร์ว่า Echinocactus Grusonii Hildm. ต้นกำเนิดจากเม็กซิโกและอเมริกากลาง ลำต้นลักษณะกึ่งทรงกลมแป้น สีเขียวอ่อนถึงสีเขียวเข้ม ปกคลุมด้วยหนามสีขาวอมเหลือง ลักษณะแตกออกเป็นรัศมี เมื่อต้นโตส่วนบนสุดของลำต้นจะเว้าลงมาคล้ายปากถัง และออกดอกบริเวณยอดของลำต้นสีเหลืองทอง ส่วนใหญ่นิยมขยายพันธุ์ด้วยการเพาะเมล็ด เหมาะสำหรับปลูกในดินร่วนปนทราย ระบายน้ำได้ดี ชอบน้ำปานกลาง และชอบแสงแดดจัด ทนแล้งได้ดี', 2, 14),
+(20, 'เรนโบว์', '55.00', 100, 0, 'In stock', '/products/1750973947272-454292363.png,/products/1750973951723-799874942.jpg', 'เรนโบว์ (Rainbow Hedgehog Cactus) มีชื่อวิทยาศาสตร์ว่า Echinocereus rigidissimus (Engelm.) Rose ต้นกำเนิดมาจากประเทศสหรัฐอเมริกาและเม็กซิโก ลักษณะลำต้นทรงกระบอก เมื่อโตจะมีความสูงประมาณ 6-20 เซนติเมตร หนามราบไปกับลำต้น มีจุดเด่นอยู่ที่หนามสีแดง-ชมพูเข้มไล่เฉดสีคล้ายรุ้ง ส่วนดอกออกสีชมพูสดที่ปลายยอด บานช่วงพฤษภาคม-กรกฎาคม นิยมขยายพันธุ์ด้วยการเพาะเมล็ด โตช้า ชอบดินที่ระบายน้ำดีและมีความเป็นกรดเล็กน้อย ชอบแสงแดดจ้า ต้องการน้ำเล็กน้อย ลดการให้น้ำช่วงหน้าฝน พร้อมระวังน้ำขังเพราะอาจจะทำให้รากเน่าได้ง่ายด้วย', 1, 7),
+(21, 'คลื่นสมอง', '65.00', 55, 0, 'In stock', '/products/1750974205589-756886561.png,/products/1750974210400-186454624.jpg', 'คลื่นสมอง มีชื่อวิทยาศาสตร์ว่า Echinofossulocactus Phyllacanthus Lawr. in Loudon ต้นกำเนิดมาจากประเทศเม็กซิโก ลำต้นค่อนข้างกลม พูหยักคล้ายสมอง มีตุ่มหนามประมาณ 1-3 ตุ่มในแต่ละพู และหนามยาวสีขาว-น้ำตาลเกือบทั่วลำต้น ไม่แตกหน่อ ส่วนดอกเป็นทรงกรวยขนาดเล็ก สีชมพูอมขาว ออกตรงกลางยอด บานช่วงฤดูร้อน นิยมขยายพันธุ์ด้วยการเพาะเมล็ด ชอบดินทั่วไปที่ระบายน้ำดี ชอบแสงแดดจัด ทนร้อน ทนแล้งได้ดี แต่ไม่ทนความเย็น ต้องการน้ำไม่มาก ให้รดตอนดินแห้ง ', 2, 15),
+(23, 'เทอร์บินิคาร์ปัส', '65.00', 10, 0, 'In stock', '/products/1751728564142-861913548.png', 'เทอร์บินิคาร์ปัส มีชื่อวิทยาศาสตร์ว่า Turbinicarpus Krainzianus Var. Minimus เป็นต้นไม้ปลูกง่าย ขนาดเล็ก มีหัวใต้ดิน ลำต้นสีเขียวเข้ม ขึ้นเป็นกอ ปกคลุมด้วยหนามสีขาว มีดอกสีครีมขึ้นปลายยอดสีเหลืองครีมและสีเขียวอ่อน นิยมขยายพันธุ์ด้วยการเพาะเมล็ด ชอบดินร่วนระบายน้ำได้ดี ชอบน้ำ และชอบแสงแดดจัด ทนแล้งได้ดี', 1, 26),
+(24, 'คามิเน่ แดง', '45.00', 100, 0, 'In stock', '/products/1751728845031-91049207.png', 'คามิเน่ แดง มีชื่อวิทยาศาสตร์ว่า Mammillaria Carmenae f. rubrispina hort. ต้นกำเนิดมาจากเนเธอร์แลนด์ ลักษณะลำต้นทรงกระบอก ขนอ่อนสีทอง-แดง ขึ้นเป็นกระจุก ปลายหนามกระจายเป็นแฉก ส่วนดอกมีตั้งแต่สีขาวครีม ชมพู และชมพูอ่อน มักขึ้นเรียงรอบยอดต้นคล้ายมงกุฎ ขยายพันธุ์ด้วยการแบ่งแยกส่วนและเพาะเมล็ด ชอบดินที่ระบายน้ำดี ชอบแสงแดดจัด ควรรดน้ำในหน้าร้อนอย่างสม่ำเสมอ แต่ระวังอย่าให้แฉะ เพราะจะทำให้รากเน่าได้', 2, 17),
+(25, 'แมมมิลาเรีย อีลองกาต้า (แมมนิ้วทอง)', '55.50', 45, 0, 'In stock', '/products/1751729119471-207301634.png', 'แมมมิลาเรีย อีลองกาต้า หรือแมมนิ้วทอง (Ladyfinger Cactus, Gold Lace Cactus) มีชื่อวิทยาศาสตร์ว่า Mammillaria Elongata DC. เป็นพืชท้องถิ่นของเม็กซิโก ลักษณะลำต้นตั้งตรงสีเขียวอ่อน แตกหน่อจากตุ่มหนาม มีหนามขนาดเล็ก โคนสีเหลือง ปลายสีแดง ส่วนดอกเป็นดอกเดี่ยวสีขาว ขนาดเล็ก ออกตามซอกตุ่มหนาม นิยมขยายพันธุ์ด้วยการเพาะเมล็ดและปักชำหน่อ ชอบดินร่วนปนทรายที่ระบายน้ำดี ชอบน้ำปานกลาง-น้อย และชอบแสงแดดจัด ๆ ทนแล้งได้ดี', 1, 3),
+(27, 'เฟอโรคัตตัส หนามแดง', '45.00', 16, 0, 'In stock', '/products/1751738236052-475535476.jpeg', 'เฟอโรคัตตัส หนามแดง เป็นชื่อเรียกของกระบองเพชรในสกุล Ferocactus ที่มีหนามสีแดง โดยทั่วไปแล้วหมายถึงสายพันธุ์ Ferocactus pilosus หรือ Ferocactus peninsulae. ลักษณะเด่นคือหนามสีแดงสดที่แหลมคมและแข็งแรง. \n', 2, 14),
+(28, 'อิชิโนแคคตัส หนามขาว', '65.00', 25, 0, 'In stock', '/products/1751738410439-733208181.jpeg', ' Echinocactus grusonii var. albispinus Y.Ito\n\nเป็นหนึ่งในกระบองเพชรสายพันธุ์อิชินอปซิส ที่เหล่าผู้เลี้ยงกระบองเพชรรู้จักกันดีนั่นเอง หากจะถามว่าเจ้าถังเงิน แตกต่างจากเจ้าถังทองอย่างไร?\n\nก็แทบจะไม่มีสิ่งเหล่านั้นเลย เพราะกระบองเพชรถังเงินก็คือ กระบองเพชรถังทองแบบที่หนามเป็นสีขาวเท่านั้นเอง\n\nใครที่ชอบกระบองเพชรแนวถังทองอยู่แล้ว แต่อยากเปลี่ยนสี เปลี่ยนบรรยากาศ หรือเลี้ยงคู่กันให้เป็นมงคลก็ดีไม่หยอก', 2, 15),
+(29, 'ออริโอเซเรอุส ตาแก่แห่งแอนดีส', '85.00', 3, 0, 'In stock', '/products/1751738573934-534856261.jpeg', 'ออริโอเซเรอุส แคคตัส (Aриоเซเรอุส) เป็นสกุลของกระบองเพชรที่ขึ้นชื่อเรื่องลักษณะที่คล้ายหินและเติบโตช้า มักมีลำต้นกลมแบน มีหนามเล็กๆ หรือไม่มีเลย ส่วนใหญ่พบในเม็กซิโกและสหรัฐอเมริกา \nลักษณะทั่วไปของออริโอเซเรอุส แคคตัส:\nรูปร่าง:\nลำต้นมีลักษณะกลมแบน หรือเป็นทรงกระบอกสั้นๆ \nหนาม:\nโดยทั่วไปมีหนามน้อย หรือไม่มีเลย หนามที่พบส่วนใหญ่มักเป็นขนสั้นๆ หรือเป็นตุ่มเล็กๆ \nราก:\nมีรากสะสมอาหารขนาดใหญ่ใต้ดิน \nดอก:\nดอกมีขนาดใหญ่ รูปถ้วย หรือรูปกรวย สีขาว เหลือง ชมพู หรือม่วง ', 2, 20),
+(30, 'คลีสโตคัตตัส หนามฟู', '56.50', 6, 0, 'In stock', '/products/1751738878382-782000239.png', '\"คลีสโตคัตตัส หนามฟู\" เป็นชื่อเรียกของแคคตัสชนิดหนึ่งที่มีหนามละเอียดและฟูคล้ายขน หรืออาจหมายถึงแคคตัสที่มีหนามปกคลุมหนาแน่นจนดูฟู ซึ่งเป็นลักษณะที่พบได้ทั่วไปในแคคตัสหลายชนิด ตัวอย่างเช่น แคคตัสในสกุล Cleistocactus มักมีหนามยาวและหนาแน่น หรือบางชนิดอาจมีหนามที่ดูเหมือนขนปกคลุมทั่วทั้งต้น \n', 2, 19);
 
-INSERT INTO `orders` (`Oid`, `Oprice`, `Odate`, `Ostatus`, `Cid`) VALUES
-(1, '450.00', '2025-06-19', 'pending', 1);
-INSERT INTO `orders` (`Oid`, `Oprice`, `Odate`, `Ostatus`, `Cid`) VALUES
-(2, '450.00', '2025-06-19', 'pending', 1);
-INSERT INTO `orders` (`Oid`, `Oprice`, `Odate`, `Ostatus`, `Cid`) VALUES
-(3, '450.00', '2025-06-19', 'pending', 1);
-INSERT INTO `orders` (`Oid`, `Oprice`, `Odate`, `Ostatus`, `Cid`) VALUES
-(4, '450.00', '2025-06-19', 'pending', 1),
-(5, '450.00', '2025-06-19', 'pending', 12),
-(6, '750.00', '2025-06-19', 'cancelled', 5),
-(7, '320.00', '2025-06-19', 'cancelled', 5),
-(8, '380.00', '2025-06-19', 'cancelled', 5),
-(9, '240.00', '2025-06-19', 'cancelled', 5),
-(10, '520.00', '2025-06-19', 'cancelled', 5),
-(11, '570.00', '2025-06-20', 'cancelled', 5),
-(12, '330.00', '2025-06-20', 'cancelled', 5),
-(13, '450.00', '2025-06-20', 'cancelled', 5),
-(14, '430.00', '2025-06-20', 'waiting', 5);
 
-INSERT INTO `payments` (`Payid`, `Oid`, `Payprice`, `Paydate`, `Paystatus`, `SlipUrl`) VALUES
-(1, 4, '450.00', '2025-06-19 23:30:33', 'waiting', '/slips/1750375833640-248522693.jpg');
-INSERT INTO `payments` (`Payid`, `Oid`, `Payprice`, `Paydate`, `Paystatus`, `SlipUrl`) VALUES
-(2, 10, '520.00', '2025-06-19 23:45:29', 'waiting', '/slips/1750376729849-982801340.jpg');
-INSERT INTO `payments` (`Payid`, `Oid`, `Payprice`, `Paydate`, `Paystatus`, `SlipUrl`) VALUES
-(3, 11, '570.00', '2025-06-20 00:12:16', 'waiting', '/slips/1750378336062-718549742.jpg');
-INSERT INTO `payments` (`Payid`, `Oid`, `Payprice`, `Paydate`, `Paystatus`, `SlipUrl`) VALUES
-(4, 12, '330.00', '2025-06-20 00:16:00', 'waiting', '/slips/1750378560444-919985367.jpg'),
-(5, 13, '450.00', '2025-06-20 00:35:59', 'waiting', '/slips/1750379759547-86134413.jpg'),
-(6, 14, '430.00', '2025-06-20 00:42:24', 'waiting', '/slips/1750380144481-143919309.jpg');
+INSERT INTO `reviews` (`id`, `text`, `stars`, `created_at`, `order_id`) VALUES
+(10, 'ดีมาก เก๋สุดๆ', 5, '2025-06-30 00:44:29', 34);
 
-
-
-INSERT INTO `products` (`Pid`, `Pname`, `Pprice`, `Pnumproduct`, `Prenume`, `Pstatus`, `Ppicture`, `Pdetail`) VALUES
-(1, 'เดย์ดรีม (Gymnocalycium ‘Daydream’)', '50.00', 100, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', 'แคคตัสสายพันธุ์หายาก สีเขียวอมม่วง ทนแล้ง เหมาะกับคนไม่มีเวลา');
-INSERT INTO `products` (`Pid`, `Pname`, `Pprice`, `Pnumproduct`, `Prenume`, `Pstatus`, `Ppicture`, `Pdetail`) VALUES
-(2, 'ซีเปีย (Gymnocalycium ‘Sepia’)', '50.00', 150, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL);
-INSERT INTO `products` (`Pid`, `Pname`, `Pprice`, `Pnumproduct`, `Prenume`, `Pstatus`, `Ppicture`, `Pdetail`) VALUES
-(3, 'แคคตัสทรายแช่น้ำสีเขียว', '50.00', 120, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg,https://images.pexels.com/photos/4581905/pexels-photo-4581905.jpeg,https://images.pexels.com/photos/1207978/pexels-photo-1207978.jpeg', 'แคคตัสสายพันธุ์หายาก สีเขียวอมม่วง ทนแล้ง เหมาะกับคนไม่มีเวลา');
-INSERT INTO `products` (`Pid`, `Pname`, `Pprice`, `Pnumproduct`, `Prenume`, `Pstatus`, `Ppicture`, `Pdetail`) VALUES
-(4, 'แคคตัสทรายแช่น้ำสีเหลือง', '50.00', 80, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL),
-(5, 'แคคตัสทรายแช่น้ำสีชมพู', '50.00', 90, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL),
-(6, 'แคคตัสสีขาวขนาดใหญ่', '70.00', 70, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL),
-(7, 'แคคตัสสีดำขนาดใหญ่', '70.00', 60, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL),
-(8, 'แคคตัสสีน้ำเงินขนาดใหญ่', '70.00', 80, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL),
-(9, 'แคคตัสสีเขียวขนาดใหญ่', '70.00', 100, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL),
-(10, 'แคคตัสสีแดงขนาดใหญ่', '70.00', 110, 0, 'In stock', 'https://pbs.twimg.com/media/EublzC5UUAUbJDB.jpg', NULL);
-
-
-
-
-
-INSERT INTO `reviews` (`id`, `text`, `stars`, `created_at`) VALUES
-(1, 'แคคตัสน่ารักมาก ส่งเร็ว แพ็กดีสุด ๆ', 5, '2025-06-03 18:56:52');
-INSERT INTO `reviews` (`id`, `text`, `stars`, `created_at`) VALUES
-(2, 'สีสวย ต้นสมบูรณ์ แต่ส่งช้าหน่อย', 4, '2025-06-03 18:56:52');
-INSERT INTO `reviews` (`id`, `text`, `stars`, `created_at`) VALUES
-(3, 'ต้นเล็กกว่าที่คิดนิดนึง แต่โดยรวมโอเค', 3, '2025-06-03 18:56:52');
-INSERT INTO `reviews` (`id`, `text`, `stars`, `created_at`) VALUES
-(4, 'มีรอยช้ำเล็กน้อยตอนแกะกล่อง', 2, '2025-06-03 18:56:52'),
-(5, 'ต้นตายตอนมาถึงเลย เสียใจมาก 🥲', 3, '2025-06-03 18:56:52'),
-(6, 'ชอบร้านนี้มาก ส่งไว บริการดี', 5, '2025-06-03 19:13:52'),
-(7, 'เจ้าของน่ารัก', 5, '2025-06-03 19:30:32');
-
-
-
+INSERT INTO `subtypes` (`Subtypeid`, `subname`, `Typeid`) VALUES
+(1, 'Gymnocalycium  ', 1),
+(2, 'Astrophytum   ', 1),
+(3, 'Mammillaria ', 1),
+(4, 'Lophophora   ', 1),
+(5, 'Rebutia ', 1),
+(6, 'Copiapoa ', 1),
+(7, 'Echinopsis  ', 1),
+(14, 'Ferocactus', 2),
+(15, 'Echinocactus ', 2),
+(16, 'Gymnocalycium  ', 2),
+(17, 'Mammillaria   ', 2),
+(18, 'Copiapoa    ', 2),
+(19, 'Cleistocactus     ', 2),
+(20, 'Oreocereus', 2),
+(21, 'ไม้อวบน้ำ', 3),
+(22, 'ดิน', 4),
+(23, 'กระถาง', 4),
+(25, 'อุปกรณ์เสริม', 4),
+(26, 'อื่นๆ', 1),
+(27, 'อื่นๆ', 2);
+INSERT INTO `transfer` (`Tid`, `Tname`, `Tnum`, `Taccount`, `Tbranch`, `Tqr`) VALUES
+(1, 'นายแคคตัส ตัวจริง', '012-345-6789', 'กสิกรไทย', 'เซ็นทรัลเวสต์เกต', '/qrs/qr1.png'),
+(2, 'Cactus Auction Co.', '987-654-3210', 'ไทยพาณิชย์', 'เซ็นทรัลลาดพร้าว', '/qrs/qr2.png');
 
 
 
