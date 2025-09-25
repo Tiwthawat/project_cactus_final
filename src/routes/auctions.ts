@@ -177,7 +177,7 @@ router.post(
 
       const [result] = await pool.query<ResultSetHeader>(
         `INSERT INTO auction_products (PROname, PROprice, PROstatus, PROpicture, PROdetail)
-   VALUES (?, ?, 'auction', ?, ?)`,
+   VALUES (?, ?, 'ready', ?, ?)`,
         [PROname, priceNum, pictureUrl, PROdetail ?? null]
       );
 
@@ -255,6 +255,11 @@ router.post(
         `INSERT INTO auctions (PROid, start_price, current_price, end_time, status, min_increment)
          VALUES (?, ?, ?, ?, 'open', ?)`,
         [proIdNum, startNum, startNum, end, minIncNum]
+      );
+
+      await conn.query(
+        `UPDATE auction_products SET PROstatus='auction' WHERE PROid=?`,
+        [proIdNum]
       );
 
       await conn.commit();
@@ -430,46 +435,53 @@ router.get(
   }
 );
 
-router.get(
-  "/auction-products",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const status = (req.query.status as string | undefined) ?? "all";
-      const q = (req.query.q as string | undefined)?.trim();
-      const available = String(req.query.available || "") === "1";
+router.get("/auction-products", async (req, res, next) => {
+  try {
+    const status = (req.query.status as string | undefined) ?? "all";
+    const q = (req.query.q as string | undefined)?.trim();
 
-      let sql = `
-        SELECT 
-  p.PROid, p.PROname, p.PROpicture, p.PROprice, p.PROstatus, p.PROdetail,
-  a.Aid AS active_aid, a.end_time AS active_end_time, a.current_price AS active_current_price
-FROM auction_products p
-LEFT JOIN auctions a ON a.PROid = p.PROid AND a.status = 'open'
-      `;
-      const params: Array<string | number> = [];
+    // ✅ ถ้ามีพารามิเตอร์ชื่อ available (ค่าจะเป็น 1/true/อะไรก็ได้) ให้ถือว่าเปิดใช้ฟิลเตอร์
+    const available =
+      Object.prototype.hasOwnProperty.call(req.query, "available") &&
+      String(req.query.available).toLowerCase() !== "0" &&
+      String(req.query.available).toLowerCase() !== "false";
 
-      const where: string[] = [];
-      if (status !== "all") {
-        where.push("p.PROstatus = ?");
-        params.push(status);
-      }
-      if (q) {
-        where.push("(p.PROname LIKE ?)");
-        params.push(`%${q}%`);
-      }
-      if (available) {
-        where.push("a.Aid IS NULL");
-      }
-      if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
+    let sql = `
+      SELECT 
+        p.PROid, p.PROname, p.PROpicture, p.PROprice, p.PROstatus, p.PROdetail,
+        a.Aid AS active_aid, a.end_time AS active_end_time, a.current_price AS active_current_price
+      FROM auction_products p
+      LEFT JOIN auctions a ON a.PROid = p.PROid AND a.status = 'open'
+    `;
+    const params: Array<string | number> = [];
 
-      sql += ` ORDER BY p.PROid DESC`;
-
-      const [rows] = await pool.query<AuctionProductListRow[]>(sql, params);
-      res.json(rows);
-    } catch (err) {
-      next(err);
+    const where: string[] = [];
+    if (status !== "all") {
+      where.push("p.PROstatus = ?");
+      params.push(status);
     }
+    if (q) {
+      where.push("(p.PROname LIKE ?)");
+      params.push(`%${q}%`);
+    }
+    if (available) {
+      // ✅ กันหลุดด้วย NOT EXISTS (แม้จะมีหลายแถวจาก join ก็ไม่พลาด)
+      where.push(`NOT EXISTS (
+        SELECT 1 FROM auctions ax
+        WHERE ax.PROid = p.PROid AND ax.status = 'open'
+      )`);
+    }
+
+    if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
+    sql += ` ORDER BY p.PROid DESC`;
+
+    const [rows] = await pool.query<AuctionProductListRow[]>(sql, params);
+    res.json(rows);
+  } catch (err) {
+    next(err);
   }
-);
+});
+
 
 // ✅ ลบสินค้าออกจากตาราง auction_products
 router.delete(
