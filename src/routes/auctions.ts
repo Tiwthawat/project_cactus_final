@@ -101,18 +101,69 @@ interface AuctionProductRow extends RowDataPacket {
   active_current_price: number | null;
 }
 
-
-
-
-async function autoCloseExpired() {
-  // ถ้าแน่ใจว่าเวลาตรงกับเซิร์ฟเวอร์แล้ว ใช้ NOW() ได้
-  await pool.query(`
-    UPDATE auctions
-       SET status = 'closed'
-     WHERE status = 'open'
-       AND end_time <= NOW()
-  `);
+interface BidRow extends RowDataPacket {
+  Bidid: number;
+  auction_id: number;
+  user_id: number;
+  amount: number;
+  created_at: Date;
 }
+
+
+
+
+
+
+export async function autoCloseExpired() {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [expired] = await conn.query<AuctionRow[]>(
+      `SELECT Aid
+       FROM auctions
+       WHERE status='open'
+         AND end_time <= NOW()
+       FOR UPDATE`
+    );
+
+    for (const auc of expired) {
+      const [bids] = await conn.query<BidRow[]>(
+        `SELECT user_id, amount
+         FROM bids
+         WHERE auction_id = ?
+         ORDER BY amount DESC, created_at ASC
+         LIMIT 1`,
+        [auc.Aid]
+      );
+
+      if (bids.length === 0) {
+        await conn.query<ResultSetHeader>(
+          `UPDATE auctions SET status='closed' WHERE Aid=?`,
+          [auc.Aid]
+        );
+      } else {
+        const winnerId = bids[0].user_id;
+        const winAmount = bids[0].amount;
+
+        await conn.query<ResultSetHeader>(
+          `UPDATE auctions
+           SET status='closed', winner_id=?, current_price=?
+           WHERE Aid=?`,
+          [winnerId, winAmount, auc.Aid]
+        );
+      }
+    }
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 
 /* =========================
    1) รายการประมูลที่เปิดอยู่
@@ -287,13 +338,13 @@ router.post(
 /* ======================
    4) ผู้ใช้เสนอราคา (bid)
    ====================== */
-router.post(
-  "/auctions/:id/bid",
+router.post("/auctions/:id/bid",
   async (req: Request, res: Response, next: NextFunction) => {
     const conn = await pool.getConnection();
     try {
       const Aid = Number(req.params.id);
       const amount = Number(req.body.amount);
+      const userId = Number(req.body.Cid); // ✅ รับ Cid จาก body
 
       if (!Aid || Number.isNaN(Aid)) {
         return res.status(400).json({ error: "Auction ID ไม่ถูกต้อง" });
@@ -301,10 +352,13 @@ router.post(
       if (!Number.isFinite(amount) || amount <= 0) {
         return res.status(400).json({ error: "จำนวนเงินไม่ถูกต้อง" });
       }
+      if (!userId || Number.isNaN(userId)) {
+        return res.status(400).json({ error: "ต้องส่ง Cid" });
+      }
 
       await conn.beginTransaction();
 
-      // ✅ ดึงข้อมูลรอบมา lock (กันบิดชนกัน)
+      // ล็อกแถวรอบประมูล
       const [rows] = await conn.query<AuctionRow[]>(
         `SELECT current_price, status, end_time, min_increment
            FROM auctions
@@ -319,23 +373,27 @@ router.post(
 
       const { current_price, status, end_time, min_increment } = rows[0];
 
-      // ✅ ตรวจสอบสถานะ
+      // ตรวจสถานะ/เวลา
       if (status !== "open" || new Date(end_time) <= new Date()) {
         await conn.rollback();
         return res.status(400).json({ error: "AUCTION_CLOSED" });
       }
 
-      // ✅ ตรวจสอบก้าวบิดขั้นต่ำ
-      const requiredMin = Number(current_price) + Number(min_increment);
+      // ตรวจขั้นต่ำ
+      const requiredMin = Number(current_price) + Math.max(1, Number(min_increment ?? 1));
       if (amount < requiredMin) {
         await conn.rollback();
-        return res.status(400).json({
-          error: "BID_TOO_LOW",
-          requiredMin,
-        });
+        return res.status(400).json({ error: "BID_TOO_LOW", requiredMin });
       }
 
-      // ✅ อัปเดตราคาใหม่
+      // บันทึก bid
+      await conn.query(
+        `INSERT INTO bids (auction_id, user_id, amount)
+         VALUES (?, ?, ?)`,
+        [Aid, userId, amount]
+      );
+
+      // อัปเดตราคาปัจจุบัน
       const [upd] = await conn.query<ResultSetHeader>(
         `UPDATE auctions
             SET current_price = ?
@@ -344,12 +402,7 @@ router.post(
       );
 
       await conn.commit();
-      res.json({
-        ok: true,
-        Aid,
-        new_price: amount,
-        affected: upd.affectedRows,
-      });
+      return res.json({ ok: true, Aid, new_price: amount, affected: upd.affectedRows });
     } catch (err) {
       await conn.rollback();
       next(err);
@@ -358,6 +411,10 @@ router.post(
     }
   }
 );
+
+
+
+
 
 
 
@@ -372,26 +429,98 @@ router.patch(
       const { id } = req.params;
       await conn.beginTransaction();
 
-      // ล็อกแถวก่อนปิด
-      const [rows] = await conn.query<AuctionsTableRow[]>(
-        `SELECT Aid FROM auctions WHERE Aid = ? FOR UPDATE`,
+      // ✅ หา bid ที่ชนะ (ราคาเยอะสุด ถ้าเท่ากันเอาเวลาที่บิดก่อน)
+      const [bids] = await conn.query<BidRow[]>(
+        `SELECT user_id, amount
+         FROM bids
+         WHERE auction_id = ?
+         ORDER BY amount DESC, created_at ASC
+         LIMIT 1`,
         [id]
       );
-      if (rows.length === 0) {
-        await conn.rollback();
-        return res.status(404).json({ error: "ไม่พบประมูล" });
+
+      if (bids.length === 0) {
+        // ไม่มีใครบิด → ปิดแต่ไม่ใส่ winner
+        await conn.query<ResultSetHeader>(
+          `UPDATE auctions SET status='closed' WHERE Aid=?`,
+          [id]
+        );
+        await conn.commit();
+        return res.json({ message: "ปิดประมูลแล้ว (ไม่มีผู้ชนะ)" });
       }
 
+      const winnerId = bids[0].user_id;
+      const winAmount = bids[0].amount;
+
+      // ✅ อัปเดต auctions
       const [result] = await conn.query<ResultSetHeader>(
-        `UPDATE auctions SET status = 'closed' WHERE Aid = ?`,
-        [id]
+        `UPDATE auctions
+         SET status='closed', winner_id=?, current_price=?
+         WHERE Aid=?`,
+        [winnerId, winAmount, id]
       );
+      async function autoCloseExpired() {
+        const conn = await pool.getConnection();
+        try {
+          await conn.beginTransaction();
+
+          // ✅ หา auctions ที่หมดเวลาแล้ว และยังเปิดอยู่
+          const [expired] = await conn.query<AuctionRow[]>(
+            `SELECT Aid
+       FROM auctions
+       WHERE status='open'
+         AND end_time <= NOW()
+       FOR UPDATE`
+          );
+
+          for (const auc of expired) {
+            // ✅ หา bid ที่ชนะ
+            const [bids] = await conn.query<BidRow[]>(
+              `SELECT user_id, amount
+         FROM bids
+         WHERE auction_id = ?
+         ORDER BY amount DESC, created_at ASC
+         LIMIT 1`,
+              [auc.Aid]
+            );
+
+            if (bids.length === 0) {
+              // ไม่มีใครบิด → ปิดแต่ไม่ใส่ winner
+              await conn.query<ResultSetHeader>(
+                `UPDATE auctions
+           SET status='closed'
+           WHERE Aid=?`,
+                [auc.Aid]
+              );
+            } else {
+              const winnerId = bids[0].user_id;
+              const winAmount = bids[0].amount;
+
+              await conn.query<ResultSetHeader>(
+                `UPDATE auctions
+           SET status='closed', winner_id=?, current_price=?
+           WHERE Aid=?`,
+                [winnerId, winAmount, auc.Aid]
+              );
+            }
+          }
+
+          await conn.commit();
+        } catch (err) {
+          await conn.rollback();
+          throw err;
+        } finally {
+          conn.release();
+        }
+      }
+
 
       await conn.commit();
+
       if (result.affectedRows === 0) {
         return res.status(409).json({ error: "ปิดประมูลไม่สำเร็จ" });
       }
-      res.json({ message: "ปิดประมูลแล้ว" });
+      res.json({ message: "ปิดประมูลแล้ว", winnerId, winAmount });
     } catch (err) {
       await conn.rollback();
       next(err);
@@ -400,6 +529,7 @@ router.patch(
     }
   }
 );
+
 
 
 /* ===========================

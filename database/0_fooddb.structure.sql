@@ -1,6 +1,5 @@
 CREATE DATABASE IF NOT EXISTS cactus_db;
 USE cactus_db;
-
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
@@ -30,11 +29,11 @@ CREATE TABLE `auction_products` (
   `PROname` varchar(255) DEFAULT NULL,
   `PROprice` decimal(10,2) DEFAULT NULL,
   `PROrenume` int DEFAULT NULL,
-  `PROstatus` varchar(50) DEFAULT NULL,
+  `PROstatus` enum('ready','auction') NOT NULL DEFAULT 'ready',
   `PROpicture` varchar(255) DEFAULT NULL,
   `PROdetail` text,
   PRIMARY KEY (`PROid`)
-) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=27 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `auctions`;
 CREATE TABLE `auctions` (
@@ -47,10 +46,11 @@ CREATE TABLE `auctions` (
   `status` enum('open','closed') DEFAULT 'open',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `min_increment` int NOT NULL DEFAULT '1',
   PRIMARY KEY (`Aid`),
   UNIQUE KEY `ux_auctions_one_active_per_product` (`PROid`),
   CONSTRAINT `auctions_ibfk_1` FOREIGN KEY (`PROid`) REFERENCES `auction_products` (`PROid`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=33 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `customers`;
 CREATE TABLE `customers` (
@@ -225,19 +225,35 @@ CREATE TABLE `users` (
 
 INSERT INTO `auction_products` (`PROid`, `PROname`, `PROprice`, `PROrenume`, `PROstatus`, `PROpicture`, `PROdetail`) VALUES
 (9, 'หหหห', '20.00', NULL, 'auction', '/products/1758558843206-475982227.jpeg,/products/1758558843217-492047242.jpg,/products/1758558843275-660333590.webp', NULL),
-(10, 'ผผผผ', '25.00', NULL, 'auction', '/products/1758561722920-407603559.png,/products/1758561722935-883631298.png,/products/1758561723000-787542678.png,/products/1758561723075-439334130.png', NULL),
 (11, 'aaaa', '250.00', NULL, 'auction', '/products/1758564913725-9173106.webp,/products/1758564913734-656638037.png,/products/1758564913794-570876958.png,/products/1758564913853-326676278.jpg,/products/1758564913911-738468282.png', NULL),
-(12, 'cccc', '50.00', NULL, 'auction', '/products/1758566863003-903238771.jpg,/products/1758566863012-278416116.webp,/products/1758566863072-140158070.png,/products/1758566863133-455311306.png', NULL),
 (13, 'mmmm', '40.00', NULL, 'auction', '/products/1758567643526-320781761.jpeg,/products/1758567643533-901072762.jpg,/products/1758567643588-197666879.webp,/products/1758567643650-603381856.png,/products/1758567643724-913724046.png,/products/1758567643778-940422450.jpg', NULL),
 (14, 'ddddd', '50.00', NULL, 'auction', '/products/1758567927579-613178884.png,/products/1758567927589-558179907.png,/products/1758567927600-299726589.jpg,/products/1758567927607-806415766.png,/products/1758567927658-992347967.png,/products/1758567927720-926874455.png', NULL),
 (15, 'bbbb', '100.00', NULL, 'auction', '/products/1758567990679-907570526.jpg,/products/1758567990686-328761725.png,/products/1758567990750-801618494.png,/products/1758567990762-706942960.png,/products/1758567990772-563488428.png', NULL),
-(16, 'ppppp', '250.00', NULL, 'auction', '/products/1758569338648-528101750.jpg,/products/1758569338660-122090109.png,/products/1758569338720-30641723.png,/products/1758569338779-839506308.png', 'ก็ไม่รู้');
-INSERT INTO `auctions` (`Aid`, `PROid`, `start_price`, `current_price`, `end_time`, `winner_id`, `status`, `created_at`, `updated_at`) VALUES
-(13, 10, '50.00', '50.00', '2025-09-25 01:11:00', NULL, 'open', '2025-09-23 01:11:44', '2025-09-23 01:11:44'),
-(14, 9, '60.00', '60.00', '2025-09-28 01:12:00', NULL, 'open', '2025-09-23 01:12:14', '2025-09-23 01:12:14'),
-(16, 11, '70.00', '70.00', '2025-09-23 01:44:00', NULL, 'closed', '2025-09-23 01:42:47', '2025-09-23 01:44:12'),
-(19, 12, '700.00', '700.00', '2025-09-23 02:00:00', NULL, 'closed', '2025-09-23 01:48:07', '2025-09-23 02:00:20'),
-(20, 13, '300.00', '300.00', '2025-09-23 02:03:00', NULL, 'closed', '2025-09-23 02:01:28', '2025-09-23 02:03:00');
+(16, 'ppppp', '250.00', NULL, 'auction', '/products/1758569338648-528101750.jpg,/products/1758569338660-122090109.png,/products/1758569338720-30641723.png,/products/1758569338779-839506308.png', 'ก็ไม่รู้'),
+(17, 'OOO', '850.00', NULL, 'auction', '/products/1758736036248-413645323.jpeg,/products/1758736036262-484032940.jpg,/products/1758736036326-605877786.webp,/products/1758736036381-780084534.png,/products/1758736036442-394157305.png,/products/1758736036464-3958384.jpg', 'dddddddddddddddddddddddddddddd'),
+(18, 'ssssss', '500.00', NULL, 'auction', '/products/1758738485983-256829937.png,/products/1758738485995-506220813.png,/products/1758738486054-412956799.png,/products/1758738486114-799192491.png', 'lkfdslv,mvx'),
+(19, 'ASSSSAA', '2000.00', NULL, 'auction', '/products/1758738516894-744076504.jpeg,/products/1758738516902-454874163.png,/products/1758738516965-106814487.png,/products/1758738517024-175947412.jpg', '2sdckjmzxkjlc'),
+(20, 'vvvVV', '400.00', NULL, 'auction', '/products/1758738899646-759830988.jpg,/products/1758738899762-105048449.jpeg,/products/1758738899772-252788353.png,/products/1758738899845-886003702.png,/products/1758738899911-288342185.jpg', 'kfslacmlkjl'),
+(21, 'อ่่่่าาาาาาาาาา', '200.00', NULL, 'auction', '/products/1758739394176-805197819.png,/products/1758739394186-907603335.jpg', 'ดฟหสมแดวห'),
+(22, 'อกหาอกสา', '250.00', NULL, 'auction', '/products/1758739851528-850446262.png,/products/1758739851541-342496991.png,/products/1758739851595-925218341.jpg', 'กหาสดททสำหทส'),
+(23, 'ศศศศ', '250.00', NULL, 'auction', '/products/1758754358635-588366520.webp,/products/1758754358686-849244426.png,/products/1758754358753-393861750.png,/products/1758754358815-932573030.png,/products/1758754358884-928348104.png,/products/1758754358955-480613367.jpg', 'กำแืดหาสฟำืดา่ื'),
+(24, 'ณณฯณณฯ', '100.00', NULL, 'auction', '/products/1758754691996-698190035.jpeg,/products/1758754692048-658563691.jpeg,/products/1758754692054-283630259.png,/products/1758754692112-966047629.png', 'าาสกดปสาืเ'),
+(25, 'XXXXX', '250.00', NULL, 'auction', '/products/1758754804037-406149107.jpg,/products/1758754804089-832192977.png,/products/1758754804159-760708268.png', '10kldcvmlskd'),
+(26, 'ฮฮฮฮ', '257.00', NULL, 'auction', '/products/1758754829473-266240291.jpg,/products/1758754829529-525478687.webp,/products/1758754829535-828679886.png,/products/1758754829600-25958031.png', '9');
+INSERT INTO `auctions` (`Aid`, `PROid`, `start_price`, `current_price`, `end_time`, `winner_id`, `status`, `created_at`, `updated_at`, `min_increment`) VALUES
+(14, 9, '60.00', '79.00', '2025-09-28 01:12:00', NULL, 'open', '2025-09-23 01:12:14', '2025-09-25 06:55:10', 1),
+(16, 11, '70.00', '70.00', '2025-09-23 01:44:00', NULL, 'closed', '2025-09-23 01:42:47', '2025-09-23 01:44:12', 1),
+(20, 13, '300.00', '300.00', '2025-09-23 02:03:00', NULL, 'closed', '2025-09-23 02:01:28', '2025-09-23 02:03:00', 1),
+(21, 16, '999.00', '999.00', '2025-09-25 00:30:00', NULL, 'closed', '2025-09-24 23:54:24', '2025-09-25 00:30:39', 1),
+(24, 17, '850.00', '2100.18', '2025-09-25 01:17:00', NULL, 'closed', '2025-09-25 00:47:51', '2025-09-25 01:17:02', 50),
+(25, 20, '799.00', '799.00', '2025-09-25 02:20:00', NULL, 'closed', '2025-09-25 01:47:53', '2025-09-25 02:33:40', 50),
+(26, 21, '120.00', '140.00', '2025-09-25 05:20:00', NULL, 'closed', '2025-09-25 05:06:26', '2025-09-25 05:20:34', 20),
+(27, 18, '120.00', '120.00', '2025-09-25 05:53:00', NULL, 'closed', '2025-09-25 05:28:23', '2025-09-25 05:53:09', 25),
+(28, 22, '150.00', '150.00', '2025-09-25 06:00:00', NULL, 'closed', '2025-09-25 05:37:44', '2025-09-25 06:00:39', 35),
+(29, 23, '250.00', '250.00', '2025-09-25 06:18:00', NULL, 'closed', '2025-09-25 05:53:09', '2025-09-25 06:18:04', 20),
+(30, 24, '59.00', '100.00', '2025-09-25 06:30:00', NULL, 'closed', '2025-09-25 05:58:44', '2025-09-25 06:30:01', 5),
+(31, 25, '250.00', '250.00', '2025-09-25 06:20:00', NULL, 'closed', '2025-09-25 06:01:14', '2025-09-25 06:20:02', 9),
+(32, 26, '260.00', '260.00', '2025-09-25 06:22:00', NULL, 'closed', '2025-09-25 06:02:37', '2025-09-25 06:22:39', 25);
 INSERT INTO `customers` (`Cid`, `Cname`, `Caddress`, `Cusername`, `Cpassword`, `Cphone`, `Cstatus`, `Cdate`, `Cprofile`, `Cbirth`, `Csubdistrict`, `Cdistrict`, `Cprovince`, `Czipcode`) VALUES
 (1, 'Jane Smith', '456 Elm Street, Townsville', 'janesmith456', 'pass456', '555-5678', 'deleted', '2023-07-20', NULL, '1985-10-20', NULL, NULL, NULL, NULL),
 (5, 'จินดา วงศ์', '33/8', 'lipid23', '$2a$10$k4wP2G7Xw0tTkq1.n/ZVUeoyAQK.MG4S0SU5QP13PF4DXR0dXBWXK', '0866658246', 'user', NULL, NULL, NULL, 'บ้านใหม่', 'ปากเกร็ด', 'นนทบุรี', '11120'),
