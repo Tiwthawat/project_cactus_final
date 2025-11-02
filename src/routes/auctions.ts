@@ -61,10 +61,10 @@ interface AuctionListRow extends RowDataPacket {
   PROname: string;
   PROpicture: string;
   PROdetail: string | null;
+  winnerName: string | null;
 }
 
-/** แถวสำหรับหน้า detail (เหมือน list แต่อ่านทีละรายการ) */
-type AuctionDetailRow = AuctionListRow;
+
 
 
 /** แถวของสินค้าเพื่อประมูล (ถ้าจำเป็นต้องใช้) */
@@ -101,12 +101,37 @@ interface AuctionProductRow extends RowDataPacket {
   active_current_price: number | null;
 }
 
+/** แถวสำหรับหน้า detail (เหมือน list แต่อ่านทีละรายการ) */
+interface AuctionDetailRow extends RowDataPacket {
+  Aid: number;
+  start_price: number;
+  current_price: number;
+  end_time: Date;
+  status: "open" | "closed";
+  min_increment: number;
+  PROid: number;
+  PROname: string;
+  PROpicture: string;
+  PROdetail: string | null;
+  PROstatus: string;
+  PROprice: number;
+  winner_id: number | null;
+  winnerName: string | null;   // ✅ เพิ่มตรงนี้
+}
+
+
 interface BidRow extends RowDataPacket {
   Bidid: number;
   auction_id: number;
   user_id: number;
   amount: number;
   created_at: Date;
+}
+
+interface AuctionLeader extends RowDataPacket {
+  Cid: number | null;         // ไอดีผู้บิดสูงสุด (ถ้าไม่มี = null)
+  Cusername: string | null;   // ชื่อผู้บิดสูงสุด
+  amount: number | null;      // จำนวนเงินที่บิดล่าสุด
 }
 
 
@@ -119,15 +144,18 @@ export async function autoCloseExpired() {
   try {
     await conn.beginTransaction();
 
+    // 1) หา auctions ที่หมดเวลาแล้วและยังเปิดอยู่
     const [expired] = await conn.query<AuctionRow[]>(
-      `SELECT Aid
-       FROM auctions
-       WHERE status='open'
-         AND end_time <= NOW()
+      `SELECT a.Aid, a.PROid
+       FROM auctions a
+       WHERE a.status='open'
+         AND a.end_time <= NOW()
        FOR UPDATE`
     );
 
+    // 2) วน loop ทีละรอบ
     for (const auc of expired) {
+      // 2.1) หา bid ที่มากที่สุด (ถ้ามี)
       const [bids] = await conn.query<BidRow[]>(
         `SELECT user_id, amount
          FROM bids
@@ -139,10 +167,23 @@ export async function autoCloseExpired() {
 
       if (bids.length === 0) {
         await conn.query<ResultSetHeader>(
-          `UPDATE auctions SET status='closed' WHERE Aid=?`,
+          `UPDATE auctions
+     SET status='closed', winner_id=NULL, current_price=start_price
+     WHERE Aid=?`,
           [auc.Aid]
         );
-      } else {
+
+        await conn.query<ResultSetHeader>(
+          `UPDATE auction_products
+     SET PROstatus='unsold'
+     WHERE PROid=?`,
+          [auc.PROid]
+        );
+
+        console.log(`🛑 Auction ${auc.Aid} ปิด → ไม่มีผู้ชนะ (PROid=${auc.PROid})`);
+      }
+      else {
+        // 2.3) มีผู้ชนะ
         const winnerId = bids[0].user_id;
         const winAmount = bids[0].amount;
 
@@ -152,6 +193,15 @@ export async function autoCloseExpired() {
            WHERE Aid=?`,
           [winnerId, winAmount, auc.Aid]
         );
+
+        await conn.query<ResultSetHeader>(
+          `UPDATE auction_products SET PROstatus='sold' WHERE PROid=?`,
+          [auc.PROid]
+        );
+
+        // console.log(
+        //   `✅ Auction ${auc.Aid} ปิด → winner=${winnerId}, amount=${winAmount}, PROid=${auc.PROid}`
+        // );
       }
     }
 
@@ -163,6 +213,7 @@ export async function autoCloseExpired() {
     conn.release();
   }
 }
+
 
 
 /* =========================
@@ -429,7 +480,7 @@ router.patch(
       const { id } = req.params;
       await conn.beginTransaction();
 
-      // ✅ หา bid ที่ชนะ (ราคาเยอะสุด ถ้าเท่ากันเอาเวลาที่บิดก่อน)
+      // ✅ หา bid ที่ชนะ
       const [bids] = await conn.query<BidRow[]>(
         `SELECT user_id, amount
          FROM bids
@@ -440,86 +491,51 @@ router.patch(
       );
 
       if (bids.length === 0) {
-        // ไม่มีใครบิด → ปิดแต่ไม่ใส่ winner
+        // ❌ ไม่มีใครบิด → ปิด + mark unsold
         await conn.query<ResultSetHeader>(
           `UPDATE auctions SET status='closed' WHERE Aid=?`,
           [id]
         );
+
+        await conn.query<ResultSetHeader>(
+          `UPDATE auction_products ap
+           JOIN auctions a ON a.PROid = ap.PROid
+           SET ap.PROstatus = 'unsold'
+           WHERE a.Aid = ?`,
+          [id]
+        );
+
         await conn.commit();
         return res.json({ message: "ปิดประมูลแล้ว (ไม่มีผู้ชนะ)" });
       }
 
+      // ✅ มีผู้ชนะ
       const winnerId = bids[0].user_id;
       const winAmount = bids[0].amount;
 
-      // ✅ อัปเดต auctions
+      // อัปเดต auctions
       const [result] = await conn.query<ResultSetHeader>(
         `UPDATE auctions
          SET status='closed', winner_id=?, current_price=?
          WHERE Aid=?`,
         [winnerId, winAmount, id]
       );
-      async function autoCloseExpired() {
-        const conn = await pool.getConnection();
-        try {
-          await conn.beginTransaction();
 
-          // ✅ หา auctions ที่หมดเวลาแล้ว และยังเปิดอยู่
-          const [expired] = await conn.query<AuctionRow[]>(
-            `SELECT Aid
-       FROM auctions
-       WHERE status='open'
-         AND end_time <= NOW()
-       FOR UPDATE`
-          );
-
-          for (const auc of expired) {
-            // ✅ หา bid ที่ชนะ
-            const [bids] = await conn.query<BidRow[]>(
-              `SELECT user_id, amount
-         FROM bids
-         WHERE auction_id = ?
-         ORDER BY amount DESC, created_at ASC
-         LIMIT 1`,
-              [auc.Aid]
-            );
-
-            if (bids.length === 0) {
-              // ไม่มีใครบิด → ปิดแต่ไม่ใส่ winner
-              await conn.query<ResultSetHeader>(
-                `UPDATE auctions
-           SET status='closed'
-           WHERE Aid=?`,
-                [auc.Aid]
-              );
-            } else {
-              const winnerId = bids[0].user_id;
-              const winAmount = bids[0].amount;
-
-              await conn.query<ResultSetHeader>(
-                `UPDATE auctions
-           SET status='closed', winner_id=?, current_price=?
-           WHERE Aid=?`,
-                [winnerId, winAmount, auc.Aid]
-              );
-            }
-          }
-
-          await conn.commit();
-        } catch (err) {
-          await conn.rollback();
-          throw err;
-        } finally {
-          conn.release();
-        }
-      }
-
+      // อัปเดตสถานะสินค้า → sold
+      await conn.query<ResultSetHeader>(
+        `UPDATE auction_products ap
+         JOIN auctions a ON a.PROid = ap.PROid
+         SET ap.PROstatus = 'sold'
+         WHERE a.Aid = ?`,
+        [id]
+      );
 
       await conn.commit();
 
       if (result.affectedRows === 0) {
         return res.status(409).json({ error: "ปิดประมูลไม่สำเร็จ" });
       }
+
       res.json({ message: "ปิดประมูลแล้ว", winnerId, winAmount });
     } catch (err) {
       await conn.rollback();
@@ -532,6 +548,7 @@ router.patch(
 
 
 
+
 /* ===========================
    6) รายละเอียดประมูล (1 รายการ)
    =========================== */
@@ -540,30 +557,44 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = req.params;
+      console.log("👉 Auction id =", id);
       await autoCloseExpired();
 
       const [rows] = await pool.query<AuctionDetailRow[]>(
         `
-      SELECT a.Aid, a.start_price, a.current_price, a.end_time, a.status,
-             a.min_increment,
-             p.PROid, p.PROname, p.PROpicture, p.PROdetail, p.PROstatus, p.PROprice
+        SELECT a.Aid, a.start_price, a.current_price, a.end_time, a.status,
+               a.min_increment, a.winner_id,
+               p.PROid, p.PROname, p.PROpicture, p.PROdetail, p.PROstatus, p.PROprice,
+               c.Cusername AS winnerName
         FROM auctions a
         JOIN auction_products p ON a.PROid = p.PROid
-       WHERE a.Aid = ?
-       LIMIT 1
-      `,
+        LEFT JOIN customers c ON a.winner_id = c.Cid
+        WHERE a.Aid = ?
+        LIMIT 1
+        `,
         [id]
       );
 
       if (rows.length === 0) {
         return res.status(404).json({ error: "ไม่พบรายการประมูล" });
       }
-      res.json(rows[0]);
+
+      const auc = rows[0];
+      res.json({
+        ...auc,
+        winnerName: auc.winnerName ?? ""  // ✅ ส่งชื่อผู้ชนะออกไป (ถ้ามี)
+      });
     } catch (err) {
-      next(err);
+      console.error("❌ GET /auction/:id error", err);
+      res.status(500).json({ error: "Internal server error" });
     }
   }
 );
+
+
+
+
+
 
 router.get("/auction-products", async (req, res, next) => {
   try {
@@ -724,6 +755,44 @@ router.get(
     }
   }
 );
+
+// routes/auction.ts
+router.get("/auction/:id/leader", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.query<AuctionLeader[]>(
+      `
+      SELECT 
+        b.user_id, 
+        c.Cusername AS username, 
+        b.amount, 
+        b.created_at
+      FROM bids b
+      JOIN customers c ON b.user_id = c.Cid
+      WHERE b.auction_id = ?
+      ORDER BY b.amount DESC, b.created_at DESC
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.json({ leader: null });
+    }
+
+    res.json({
+      leader: {
+        user_id: rows[0].user_id,
+        username: rows[0].username,
+        amount: rows[0].amount,
+        created_at: rows[0].created_at,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 
 export default router;

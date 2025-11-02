@@ -1,5 +1,6 @@
 //customers_all.ts
 import { Router } from "express";
+import { RowDataPacket } from "mysql2";
 import { pool } from "../app";
 
 const router = Router();
@@ -91,6 +92,26 @@ router.get("/customers/:id/orders", async (req, res, next) => {
     next(error);
   }
 });
+
+router.get("/customers/:id", async (req, res, next) => {
+  const { id } = req.params;
+  try {
+    // บอก Type ว่าคืนมาเป็น RowDataPacket[]
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT Cid, Cusername, Cemail FROM customers WHERE Cid = ? LIMIT 1",
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "ไม่พบผู้ใช้" });
+    }
+
+    res.status(200).json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 
 
