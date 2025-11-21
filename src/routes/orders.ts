@@ -63,19 +63,74 @@ router.put('/orders/:id', async (req, res, next) => {
         return res.status(400).json({ message: "ต้องระบุ Ostatus" });
     }
 
+    const conn = await pool.getConnection();
+
     try {
-        await pool.query(
+        await conn.beginTransaction();
+
+        // 1) ดึงข้อมูลคำสั่งซื้อก่อน (เช็กว่า COD ไหม)
+        const [orders] = await conn.query<RowDataPacket[]>(
+            `SELECT Opayment, Ostatus FROM orders WHERE Oid = ?`,
+            [id]
+        );
+        const order = orders[0];
+
+        // 2) ดึงรายการสินค้าในออเดอร์
+        const [items] = await conn.query<RowDataPacket[]>(
+            `SELECT Pid, Oquantity 
+             FROM order_items 
+             WHERE Oid = ?`,
+            [id]
+        );
+
+        // ⭐ CASE 1: ชำระเงินสำเร็จ (paid) → ลดสต๊อกทันที
+        if (Ostatus === 'paid') {
+            for (const item of items) {
+                await conn.query(
+                    `UPDATE products
+                     SET 
+                       Pnumproduct = Pnumproduct - ?,
+                       Prenume = COALESCE(Prenume,0) + ?
+                     WHERE Pid = ?`,
+                    [item.Oquantity, item.Oquantity, item.Pid]
+                );
+            }
+        }
+
+        // ⭐ CASE 2: shipped สำหรับ COD → ลดสต๊อกตอนส่งของ
+        if (Ostatus === 'shipped' && order.Opayment === 'cod') {
+            for (const item of items) {
+                await conn.query(
+                    `UPDATE products
+                     SET 
+                       Pnumproduct = Pnumproduct - ?,
+                       Prenume = COALESCE(Prenume,0) + ?
+                     WHERE Pid = ?`,
+                    [item.Oquantity, item.Oquantity, item.Pid]
+                );
+            }
+        }
+
+        // ⭐ CASE 3 (optional): ถ้าอยากคืนสต๊อกเวลากดยกเลิก ให้บอกเค้าเพิ่ม
+
+        // 3) อัปเดตสถานะคำสั่งซื้อ
+        await conn.query(
             `UPDATE orders SET Ostatus = ? WHERE Oid = ?`,
             [Ostatus, id]
         );
 
-        // console.log(`🟢 อัปเดตสถานะคำสั่งซื้อ ${id} → ${Ostatus}`);
+        await conn.commit();
         res.status(200).json({ message: "อัปเดตสถานะสำเร็จ" });
+
     } catch (err) {
+        await conn.rollback();
         console.error("❌ UPDATE Ostatus ERROR:", err);
         res.status(500).json({ message: "อัปเดตสถานะไม่สำเร็จ" });
+    } finally {
+        conn.release();
     }
 });
+
 
 router.get("/orders/all", async (req, res, next) => {
     const connection = await pool.getConnection();
@@ -110,7 +165,8 @@ router.post("/orders", async (req, res, next) => {
 
         const [orderResult] = await connection.query<ResultSetHeader>(
             "INSERT INTO orders (Cid, Oprice, Odate, Ostatus, Opayment) VALUES (?, ?, NOW(), ?, ?)",
-            [Cid, totalPrice, payment === 'cod' ? 'shipped' : 'pending', payment]
+            [Cid, totalPrice, 'pending', payment]
+
         );
 
         const Oid = orderResult.insertId;
@@ -387,6 +443,110 @@ router.patch('/orders/:id/status', async (req, res) => {
         res.status(500).json({ message: 'เกิดข้อผิดพลาด' });
     }
 });
+
+
+
+// GET /stats/full — รวมข้อมูลทั้งหมดของร้าน
+router.get('/stats/full', async (req, res) => {
+    try {
+        // 1) ยอดขายเฉพาะ "ขายสำเร็จ"
+        const [orderStats] = await pool.query<RowDataPacket[]>(`
+            SELECT
+                COUNT(*) AS totalOrders,
+
+                -- รายได้จริง (bank/transfer ต้อง paid, cod ต้อง shipped/delivered)
+                SUM(
+                    CASE 
+                        WHEN (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid')
+                          OR (Opayment = 'cod' AND Ostatus IN ('shipped','delivered'))
+                        THEN Oprice ELSE 0 END
+                ) AS orderSales,
+
+                -- จำนวนออเดอร์ยกเลิก
+                SUM(CASE WHEN Ostatus = 'cancelled' THEN 1 ELSE 0 END) AS cancelledOrders,
+
+                -- จำนวนออเดอร์ล้มเหลว
+                SUM(CASE WHEN Ostatus = 'failed' THEN 1 ELSE 0 END) AS failedOrders,
+
+                -- รายได้วันนี้ (เฉพาะขายสำเร็จ)
+                SUM(
+                    CASE 
+                        WHEN DATE(Odate) = CURDATE()
+                         AND (
+                                (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid') 
+                                OR 
+                                (Opayment = 'cod' AND Ostatus IN ('shipped','delivered'))
+                             )
+                        THEN Oprice ELSE 0 END
+                ) AS orderToday,
+
+                -- รายเดือน (เฉพาะขายสำเร็จ)
+                SUM(
+                    CASE 
+                        WHEN MONTH(Odate) = MONTH(CURDATE())
+                         AND YEAR(Odate) = YEAR(CURDATE())
+                         AND (
+                                (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid') 
+                                OR 
+                                (Opayment = 'cod' AND Ostatus IN ('shipped','delivered'))
+                             )
+                        THEN Oprice ELSE 0 END
+                ) AS orderMonth,
+
+                -- รายได้จากการโอน/ชำระผ่านธนาคาร
+                SUM(
+                    CASE 
+                        WHEN Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid'
+                        THEN Oprice ELSE 0 END
+                ) AS bankSales,
+
+                -- รายได้แบบเก็บเงินปลายทาง (ต้อง shipped/delivered เท่านั้น)
+                SUM(
+                    CASE 
+                        WHEN Opayment = 'cod' AND Ostatus IN ('shipped','delivered')
+                        THEN Oprice ELSE 0 END
+                ) AS codSales
+
+            FROM orders
+        `);
+
+        // 2) รายได้ประมูล
+        const [auctionStats] = await pool.query<RowDataPacket[]>(`
+            SELECT 
+                COUNT(*) AS totalAuctions,
+
+                -- รายได้ประมูลเฉพาะจ่ายแล้ว
+                SUM(
+                    CASE WHEN ap.PROstatus = 'paid'
+                        THEN a.current_price ELSE 0 END
+                ) AS auctionSales,
+
+                SUM(CASE WHEN ap.PROstatus = 'paid' THEN 1 ELSE 0 END) AS soldAuctionCount,
+                SUM(CASE WHEN ap.PROstatus = 'unsold' THEN 1 ELSE 0 END) AS unsoldAuctionCount
+
+            FROM auction_products ap
+            JOIN auctions a ON a.PROid = ap.PROid
+        `);
+
+        // 3) รวมยอดทั้งหมด
+        const totalSales =
+            Number(orderStats[0].orderSales || 0) +
+            Number(auctionStats[0].auctionSales || 0);
+
+        res.json({
+            ...orderStats[0],
+            ...auctionStats[0],
+            totalSales
+        });
+
+    } catch (err) {
+        console.error("🔥 STATS ERROR:", err);
+        res.status(500).json({ error: "ไม่สามารถโหลดสถิติได้" });
+    }
+});
+
+
+
 
 
 

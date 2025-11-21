@@ -6,6 +6,8 @@ import { createPool, Pool, PoolConnection } from "mysql2/promise";
 import path from "path";
 import ServerlessHttp from "serverless-http";
 import errorHandler from "./middlewares/errors";
+import adminbids from "./routes/admin-bids";
+import adminorders from "./routes/admin_orders";
 import adminReview from './routes/admin_reviews';
 import auctions from "./routes/auctions";
 import changePassword from './routes/change-password';
@@ -95,6 +97,9 @@ app.use(productTypes);
 app.use('/admin/reviews', adminReview);
 app.use('/favorites', favorites);
 app.use(auctions);
+app.use(adminorders);
+app.use(adminbids)
+
 
 
 
