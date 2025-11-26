@@ -55,27 +55,61 @@ router.post('/payment', uploadSlip.single('slip'), async (req, res, next) => {
         return res.status(400).json({ message: 'ข้อมูลไม่ครบ หรือยังไม่ได้เลือกบัญชีโอน' });
     }
 
-    try {
-        const imageUrl = `/slips/${file.filename}`;
+    const conn = await pool.getConnection();
 
-        // 🧾 เพิ่ม Tid ลง payments
-        await pool.query(
-            `INSERT INTO payments (Oid, Payprice, SlipUrl, Paystatus, Tid)
-       VALUES (?, ?, ?, ?, ?)`,
-            [Oid, Payprice, imageUrl, 'waiting', Tid]
+    try {
+        const [rows] = await conn.query<RowDataPacket[]>(
+            "SELECT Ostatus FROM orders WHERE Oid = ?",
+            [Oid]
         );
 
-        // 📝 อัปเดตสถานะและแนบสลิปใน orders
-        await pool.query(
-            `UPDATE orders SET Oslip = ?, Ostatus = 'waiting' WHERE Oid = ?`,
+        if (rows.length === 0) {
+            conn.release();
+            return res.status(404).json({ message: "ไม่พบออเดอร์" });
+        }
+
+        const status = rows[0].Ostatus;
+
+        // ⭐ กันส่งซ้ำ
+        if (status === "payment_review") {
+            conn.release();
+            return res.status(400).json({ message: "สลิปกำลังตรวจสอบ ไม่สามารถส่งซ้ำได้" });
+        }
+
+        if (status === "paid") {
+            conn.release();
+            return res.status(400).json({ message: "ออเดอร์นี้จ่ายเงินแล้ว ไม่สามารถส่งซ้ำได้" });
+        }
+
+        if (status !== "pending_payment") {
+            conn.release();
+            return res.status(400).json({ message: "สถานะไม่ถูกต้อง ไม่สามารถส่งสลิปได้" });
+        }
+
+        const imageUrl = `/slips/${file.filename}`;
+
+        // บันทึกลง payments
+        await conn.query(
+            "INSERT INTO payments (Oid, Payprice, SlipUrl, Paystatus, Tid) VALUES (?, ?, ?, ?, ?)",
+            [Oid, Payprice, imageUrl, 'pending', Tid]
+        );
+
+        // update order เป็น payment_review
+        await conn.query(
+            "UPDATE orders SET Oslip = ?, Ostatus = 'payment_review' WHERE Oid = ?",
             [imageUrl, Oid]
         );
 
-        res.status(201).json({ message: 'บันทึกการชำระเงินแล้ว' });
+        conn.release();
+        res.status(201).json({ message: "ส่งสลิปสำเร็จ อยู่ระหว่างตรวจสอบ" });
+
     } catch (error) {
+        conn.release();
         next(error);
     }
 });
+
+
 
 
 

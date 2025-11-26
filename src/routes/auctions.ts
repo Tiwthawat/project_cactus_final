@@ -311,6 +311,8 @@ router.get("/auctions", async (req, res, next) => {
 
     sql += " ORDER BY a.end_time DESC";
 
+
+
     const [rows] = await pool.query(sql, params);
 
     res.json(rows);
@@ -455,13 +457,15 @@ router.post(
 /* ======================
    4) ผู้ใช้เสนอราคา (bid)
    ====================== */
-router.post("/auctions/:id/bid",
-  async (req: Request, res: Response, next: NextFunction) => {
+router.post(
+  "/auctions/:id/bid",
+  verifyToken,
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
     const conn = await pool.getConnection();
     try {
       const Aid = Number(req.params.id);
       const amount = Number(req.body.amount);
-      const userId = Number(req.body.Cid); // ✅ รับ Cid จาก body
+      const userId = req.user!.Cid;   // << เปลี่ยนตรงนี้
 
       if (!Aid || Number.isNaN(Aid)) {
         return res.status(400).json({ error: "Auction ID ไม่ถูกต้อง" });
@@ -469,13 +473,9 @@ router.post("/auctions/:id/bid",
       if (!Number.isFinite(amount) || amount <= 0) {
         return res.status(400).json({ error: "จำนวนเงินไม่ถูกต้อง" });
       }
-      if (!userId || Number.isNaN(userId)) {
-        return res.status(400).json({ error: "ต้องส่ง Cid" });
-      }
 
       await conn.beginTransaction();
 
-      // ล็อกแถวรอบประมูล
       const [rows] = await conn.query<AuctionRow[]>(
         `SELECT current_price, status, end_time, min_increment
            FROM auctions
@@ -483,6 +483,7 @@ router.post("/auctions/:id/bid",
           FOR UPDATE`,
         [Aid]
       );
+
       if (rows.length === 0) {
         await conn.rollback();
         return res.status(404).json({ error: "ไม่พบรอบประมูล" });
@@ -490,28 +491,24 @@ router.post("/auctions/:id/bid",
 
       const { current_price, status, end_time, min_increment } = rows[0];
 
-      // ตรวจสถานะ/เวลา
       if (status !== "open" || new Date(end_time) <= new Date()) {
         await conn.rollback();
         return res.status(400).json({ error: "AUCTION_CLOSED" });
       }
 
-      // ตรวจขั้นต่ำ
       const requiredMin = Number(current_price) + Math.max(1, Number(min_increment ?? 1));
       if (amount < requiredMin) {
         await conn.rollback();
         return res.status(400).json({ error: "BID_TOO_LOW", requiredMin });
       }
 
-      // บันทึก bid
       await conn.query(
         `INSERT INTO bids (auction_id, user_id, amount)
          VALUES (?, ?, ?)`,
         [Aid, userId, amount]
       );
 
-      // อัปเดตราคาปัจจุบัน
-      const [upd] = await conn.query<ResultSetHeader>(
+      await conn.query<ResultSetHeader>(
         `UPDATE auctions
             SET current_price = ?
           WHERE Aid = ?`,
@@ -519,7 +516,7 @@ router.post("/auctions/:id/bid",
       );
 
       await conn.commit();
-      return res.json({ ok: true, Aid, new_price: amount, affected: upd.affectedRows });
+      return res.json({ ok: true, Aid, new_price: amount });
     } catch (err) {
       await conn.rollback();
       next(err);
@@ -528,6 +525,7 @@ router.post("/auctions/:id/bid",
     }
   }
 );
+
 
 
 
@@ -612,7 +610,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = req.params;
-      console.log("👉 Auction id =", id);
+      //console.log("👉 Auction id =", id);
       await autoCloseExpired();
 
       const [rows] = await pool.query<AuctionDetailRow[]>(
@@ -677,7 +675,6 @@ router.get("/auction-products", async (req, res, next) => {
     const status = (req.query.status as string | undefined) ?? "all";
     const q = (req.query.q as string | undefined)?.trim();
 
-    // ✅ ถ้ามีพารามิเตอร์ชื่อ available (ค่าจะเป็น 1/true/อะไรก็ได้) ให้ถือว่าเปิดใช้ฟิลเตอร์
     const available =
       Object.prototype.hasOwnProperty.call(req.query, "available") &&
       String(req.query.available).toLowerCase() !== "0" &&
@@ -685,39 +682,61 @@ router.get("/auction-products", async (req, res, next) => {
 
     let sql = `
       SELECT 
-        p.PROid, p.PROname, p.PROpicture, p.PROprice, p.PROstatus, p.PROdetail,
-        a.Aid AS active_aid, a.end_time AS active_end_time, a.current_price AS active_current_price
-      FROM auction_products p
-      LEFT JOIN auctions a ON a.PROid = p.PROid AND a.status = 'open'
-    `;
-    const params: Array<string | number> = [];
+        p.PROid, 
+        p.PROname, 
+        p.PROpicture, 
+        p.PROprice, 
+        p.PROstatus, 
+        p.PROdetail,
 
+        -- ⭐ เอารอบล่าสุดเสมอ ไม่ว่าจะ open หรือปิดแล้ว
+        a.Aid AS active_aid,
+        a.end_time AS active_end_time,
+        a.current_price AS active_current_price
+      FROM auction_products p
+      LEFT JOIN auctions a 
+        ON a.Aid = (
+          SELECT Aid 
+          FROM auctions 
+          WHERE PROid = p.PROid
+          ORDER BY end_time DESC
+          LIMIT 1
+        )
+    `;
+
+    const params: Array<string | number> = [];
     const where: string[] = [];
+
     if (status !== "all") {
       where.push("p.PROstatus = ?");
       params.push(status);
     }
+
     if (q) {
       where.push("(p.PROname LIKE ?)");
       params.push(`%${q}%`);
     }
+
     if (available) {
-      // ✅ กันหลุดด้วย NOT EXISTS (แม้จะมีหลายแถวจาก join ก็ไม่พลาด)
-      where.push(`NOT EXISTS (
-        SELECT 1 FROM auctions ax
-        WHERE ax.PROid = p.PROid AND ax.status = 'open'
-      )`);
+      where.push(`
+        NOT EXISTS (
+          SELECT 1 FROM auctions ax
+          WHERE ax.PROid = p.PROid AND ax.status = 'open'
+        )
+      `);
     }
 
     if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
+
     sql += ` ORDER BY p.PROid DESC`;
 
-    const [rows] = await pool.query<AuctionProductListRow[]>(sql, params);
+    const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
     next(err);
   }
 });
+
 
 
 // ✅ ลบสินค้าออกจากตาราง auction_products

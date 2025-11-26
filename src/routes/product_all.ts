@@ -24,6 +24,7 @@ router.get(
 
 			const typeidParam = req.query.typeid as string | undefined;
 			const subtypeidParam = req.query.subtypeid as string | undefined;
+			const searchParam = req.query.search as string | undefined;
 
 			const typeid = typeidParam ? parseInt(typeidParam, 10) : undefined;
 			const subtypeid = subtypeidParam ? parseInt(subtypeidParam, 10) : undefined;
@@ -36,18 +37,26 @@ router.get(
           LEFT JOIN subtypes s ON p.Subtypeid = s.Subtypeid
         `;
 
-				const params: number[] = [];
+				const params: any[] = [];
 				const conditions: string[] = [];
 
+				// ตามหมวดหมู่ใหญ่
 				if (typeid !== undefined && !isNaN(typeid)) {
 					conditions.push("p.Typeid = ?");
 					params.push(typeid);
 				}
 
+				// ตามหมวดย่อย
 				if (subtypeid !== undefined && !isNaN(subtypeid)) {
 					conditions.push("p.Subtypeid = ?");
 					params.push(subtypeid);
 				}
+
+				if (searchParam && searchParam.trim()) {
+					conditions.push("p.Pname LIKE ?");
+					params.push(`%${searchParam}%`);
+				}
+
 
 				if (conditions.length > 0) {
 					sql += " WHERE " + conditions.join(" AND ");
@@ -67,6 +76,7 @@ router.get(
 		}
 	}
 );
+
 
 // ✅ DELETE /product/:id
 router.delete("/product/:id", async (req: Request, res: Response, next: NextFunction) => {

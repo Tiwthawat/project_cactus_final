@@ -12,6 +12,7 @@ interface Order extends RowDataPacket {
     Odate: string;
     Ostatus: string;
     Oslip: string;
+    Opayment: string;
 }
 interface AdminOrder extends RowDataPacket {
     Oid: number;
@@ -136,7 +137,7 @@ router.get("/orders/all", async (req, res, next) => {
     const connection = await pool.getConnection();
     try {
         const [orders] = await connection.query<AdminOrder[]>(
-            `SELECT o.Oid, o.Oprice, o.Ostatus, o.Odate, c.Cname
+            `SELECT o.Oid, o.Oprice, o.Ostatus,o.Opayment, o.Odate, c.Cname
        FROM orders o
        JOIN customers c ON o.Cid = c.Cid
        ORDER BY o.Oid DESC`
@@ -159,36 +160,65 @@ router.post("/orders", async (req, res, next) => {
         return res.status(400).json({ message: "ข้อมูลไม่ครบ" });
     }
 
-    const connection = await pool.getConnection();
+    const conn = await pool.getConnection();
     try {
-        await connection.beginTransaction();
 
-        const [orderResult] = await connection.query<ResultSetHeader>(
+        // ⭐ 1) เช็กสต๊อกก่อนสร้างออเดอร์
+        for (const item of items) {
+            const [rows] = await conn.query<RowDataPacket[]>(
+                "SELECT Pnumproduct FROM products WHERE Pid = ?",
+                [item.Pid]
+            );
+
+            if (rows.length === 0) {
+                conn.release();
+                return res.status(404).json({ message: "ไม่พบสินค้า", Pid: item.Pid });
+            }
+
+            const stock = rows[0].Pnumproduct;
+
+            if (stock < item.quantity) {
+                conn.release();
+                return res.status(400).json({
+                    message: "สินค้าในคลังไม่พอ",
+                    Pid: item.Pid,
+                    available: stock
+                });
+            }
+        }
+
+        // ⭐ 2) สร้างออเดอร์ (ยังไม่ลดสต๊อกจนกว่าจะ paid)
+        await conn.beginTransaction();
+
+        const [orderResult] = await conn.query<ResultSetHeader>(
             "INSERT INTO orders (Cid, Oprice, Odate, Ostatus, Opayment) VALUES (?, ?, NOW(), ?, ?)",
-            [Cid, totalPrice, 'pending', payment]
-
+            [Cid, totalPrice, "pending_payment", payment]
         );
 
         const Oid = orderResult.insertId;
 
         for (const item of items) {
-            await connection.query(
+            await conn.query(
                 "INSERT INTO order_items (Oid, Pid, Oquantity, Oprice) VALUES (?, ?, ?, ?)",
                 [Oid, item.Pid, item.quantity, item.price]
             );
         }
 
-        await connection.commit();
-        res.status(201).json({ message: "สั่งซื้อสำเร็จ", orderId: Oid });
+        await conn.commit();
+
+        res.status(200).json({
+            message: "สร้างคำสั่งซื้อสำเร็จ",
+            orderId: Oid
+        });
 
     } catch (error) {
-        console.error("❌ ORDER ERROR:", error);
-        await connection.rollback();
+        await conn.rollback();
         next(error);
     } finally {
-        connection.release();
+        conn.release();
     }
 });
+
 
 
 router.get("/orders", async (req, res, next) => {
@@ -248,30 +278,34 @@ router.get("/orders/:id", async (req, res, next) => {
 
     const connection = await pool.getConnection();
     try {
-        const [orders] = await connection.query<Order[]>(
-            `SELECT o.*, c.Cname
-     FROM orders o
-     JOIN customers c ON o.Cid = c.Cid
-     WHERE o.Oid = ?`,
+        const [orders] = await connection.query<RowDataPacket[]>(
+            `SELECT 
+          o.*, 
+          c.Cname,
+          c.Cphone,
+          CONCAT(c.Caddress, ' ', c.Csubdistrict, ' ', c.Cdistrict, ' ', c.Cprovince, ' ', c.Czipcode) AS Caddress
+       FROM orders o
+       JOIN customers c ON o.Cid = c.Cid
+       WHERE o.Oid = ?`,
             [id]
         );
 
-        const [items] = await connection.query<OrderItem[]>(
+        const [items] = await connection.query<RowDataPacket[]>(
             `SELECT oi.*, p.Pname, p.Ppicture
-            FROM order_items oi
-            JOIN products p ON oi.Pid = p.Pid
-            WHERE oi.Oid = ?`,
+       FROM order_items oi
+       JOIN products p ON oi.Pid = p.Pid
+       WHERE oi.Oid = ?`,
             [id]
         );
 
         res.json({ ...orders[0], items });
-
     } catch (error) {
         next(error);
     } finally {
         connection.release();
     }
 });
+
 
 router.patch("/orders/:id/slip", async (req, res, next) => {
     const { id } = req.params;
@@ -429,20 +463,80 @@ router.post('/orders/:id/review', async (req, res) => {
     }
 });
 
+
 router.patch('/orders/:id/status', async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
+    const conn = await pool.getConnection();
+
     try {
-        const conn = await pool.getConnection();
-        await conn.query('UPDATE orders SET Ostatus = ? WHERE Oid = ?', [status, id]);
-        conn.release();
-        res.json({ message: 'อัปเดตสถานะเรียบร้อย' });
+        await conn.beginTransaction();
+
+        // ดึงสถานะเดิม
+        const [orderRows] = await conn.query<RowDataPacket[]>(
+            "SELECT Ostatus FROM orders WHERE Oid = ?",
+            [id]
+        );
+
+        if (orderRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ message: 'ไม่พบคำสั่งซื้อ' });
+        }
+
+        const oldStatus = String(orderRows[0].Ostatus);
+
+        // อัปเดตสถานะใหม่
+        await conn.query(
+            "UPDATE orders SET Ostatus = ? WHERE Oid = ?",
+            [status, id]
+        );
+
+        // ⭐ ลดสต๊อกครั้งแรกตอน paid
+        if (oldStatus !== "paid" && status === "paid") {
+            const [items] = await conn.query<RowDataPacket[]>(
+                "SELECT Pid, Oquantity FROM order_items WHERE Oid = ?",
+                [id]
+            );
+
+            for (const item of items) {
+                // ลด Pnumproduct และเพิ่ม Prenume
+                await conn.query(
+                    "UPDATE products SET Pnumproduct = Pnumproduct - ?, Prenume = Prenume + ? WHERE Pid = ?",
+                    [item.Oquantity, item.Oquantity, item.Pid]
+                );
+            }
+        }
+
+        // ⭐ คืนสต๊อกถ้า old = paid แล้ว -> cancelled
+        if (oldStatus === "paid" && status === "cancelled") {
+            const [items] = await conn.query<RowDataPacket[]>(
+                "SELECT Pid, Oquantity FROM order_items WHERE Oid = ?",
+                [id]
+            );
+
+            for (const item of items) {
+                await conn.query(
+                    "UPDATE products SET Pnumproduct = Pnumproduct + ?, Prenume = Prenume - ? WHERE Pid = ?",
+                    [item.Oquantity, item.Oquantity, item.Pid]
+                );
+            }
+        }
+
+        await conn.commit();
+        res.json({ message: "อัปเดตสถานะเรียบร้อย" });
+
     } catch (err) {
+        await conn.rollback();
         console.error(err);
-        res.status(500).json({ message: 'เกิดข้อผิดพลาด' });
+        res.status(500).json({ message: "เกิดข้อผิดพลาด" });
+    } finally {
+        conn.release();
     }
 });
+
+
+
 
 
 
@@ -544,6 +638,73 @@ router.get('/stats/full', async (req, res) => {
         res.status(500).json({ error: "ไม่สามารถโหลดสถิติได้" });
     }
 });
+router.patch("/orders/:id/shipping", async (req, res) => {
+    const { id } = req.params;
+    const { Oshipping, Otracking } = req.body;
+
+    if (!Oshipping || !Otracking) {
+        return res.status(400).json({ message: "ข้อมูลจัดส่งไม่ครบ" });
+    }
+
+    try {
+        await pool.query(
+            `UPDATE orders 
+             SET Oshipping = ?, Otracking = ?, Ostatus = 'shipping'
+             WHERE Oid = ?`,
+            [Oshipping, Otracking, id]
+        );
+
+        res.json({ message: "อัปเดตข้อมูลจัดส่งสำเร็จ" });
+    } catch (err) {
+        console.error("❌ SHIPPING UPDATE ERROR:", err);
+        res.status(500).json({ message: "อัปเดตจัดส่งไม่สำเร็จ" });
+    }
+});
+router.patch("/orders/:id/shipping/edit", async (req, res) => {
+    const { id } = req.params;
+    const { shipping_company, tracking_number } = req.body;
+
+    if (!shipping_company || !tracking_number) {
+        return res.status(400).json({ message: "ข้อมูลจัดส่งไม่ครบ" });
+    }
+
+    try {
+        await pool.query(
+            `UPDATE orders 
+             SET shipping_company = ?, 
+                 tracking_number = ?
+             WHERE Oid = ?`,
+            [shipping_company, tracking_number, id]
+        );
+
+        res.json({ message: "แก้ไขข้อมูลจัดส่งสำเร็จ" });
+    } catch (err) {
+        res.status(500).json({ message: "แก้ข้อมูลจัดส่งไม่สำเร็จ" });
+    }
+});
+
+router.patch("/orders/:id/delivered", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        await pool.query(
+            `UPDATE orders 
+             SET Ostatus = 'delivered'
+             WHERE Oid = ?`,
+            [id]
+        );
+
+        res.json({ message: "อัปเดตเป็น delivered แล้ว" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "อัปเดตไม่สำเร็จ" });
+    }
+});
+
+
+
+
+
 
 
 
