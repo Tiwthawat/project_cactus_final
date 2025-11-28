@@ -1,82 +1,85 @@
-import { NextFunction, Request, Response, Router } from 'express';
-import { RowDataPacket } from 'mysql2/promise';
-import { pool } from '../app';
-
-interface Favorite extends RowDataPacket {
-    id: number;
-    product_id: number;
-    Pname: string;
-    Ppicture: string;
-    Pprice: number;
-}
-
+import { NextFunction, Request, Response, Router } from "express";
+import { RowDataPacket } from "mysql2/promise";
+import { pool } from "../app";
+import { verifyToken } from "../middlewares/auth";
 
 const router = Router();
 
-// ✅ เพิ่มสินค้าเข้ารายการโปรด
-router.post('/', async (req: Request, res: Response, next: NextFunction) => {
-    const { customer_id, product_id } = req.body;
+interface FavoriteRow extends RowDataPacket {
+    product_id: number;
+}
+
+// ⭐ Toggle favorite
+router.post("/", verifyToken, async (req: Request, res: Response, next: NextFunction) => {
+    const customer_id = req.user?.Cid; // ใช้จาก token
+    const { product_id } = req.body;
 
     if (!customer_id || !product_id) {
-        return res.status(400).json({ message: 'ข้อมูลไม่ครบ' });
+        return res.status(400).json({ message: "ข้อมูลไม่ครบ" });
     }
 
     try {
-        const connection = await pool.getConnection();
+        const conn = await pool.getConnection();
         try {
-            const [exist] = await connection.query<Favorite[]>(
-                'SELECT * FROM favorites WHERE customer_id = ? AND product_id = ?',
+            // เช็คว่ามีอยู่ไหม
+            const [exist] = await conn.query<FavoriteRow[]>(
+                `SELECT * FROM favorites WHERE customer_id = ? AND product_id = ?`,
                 [customer_id, product_id]
             );
 
             if (exist.length > 0) {
-                // ลบรายการโปรดถ้ามีอยู่แล้ว
-                await connection.execute(
-                    'DELETE FROM favorites WHERE customer_id = ? AND product_id = ?',
+                await conn.execute(
+                    `DELETE FROM favorites WHERE customer_id = ? AND product_id = ?`,
                     [customer_id, product_id]
                 );
-                return res.status(200).json({ message: 'ลบรายการโปรดแล้ว' });
+                return res.json({ message: "ลบรายการโปรดแล้ว", is_favorite: false });
             }
 
-            // ถ้ายังไม่มี → เพิ่มเข้า
-            await connection.execute(
-                'INSERT INTO favorites (customer_id, product_id) VALUES (?, ?)',
+            await conn.execute(
+                `INSERT INTO favorites (customer_id, product_id) VALUES (?, ?)`,
                 [customer_id, product_id]
             );
-            res.status(201).json({ message: 'เพิ่มรายการโปรดแล้ว' });
+
+            return res.json({ message: "เพิ่มรายการโปรดแล้ว", is_favorite: true });
+
         } finally {
-            connection.release();
+            conn.release();
         }
     } catch (err) {
         next(err);
     }
 });
 
+// ⭐ ดึงรายการโปรด
+router.get("/", verifyToken, async (req: Request, res: Response) => {
+    const customer_id = req.user?.Cid;
 
-// ตัวอย่าง favoritesRoutes.ts
-router.get('/:customer_id', async (req, res) => {
-    const { customer_id } = req.params;
+    if (!customer_id) {
+        return res.status(401).json({ message: "กรุณาเข้าสู่ระบบ" });
+    }
 
     try {
         const [rows] = await pool.query(
-            `SELECT p.Pid, p.Pname, p.Pprice, p.Ppicture
-   FROM favorites f
-   JOIN products p ON f.product_id = p.Pid
-   WHERE f.customer_id = ?`,
+            `
+    SELECT 
+      p.Pid AS product_id,
+      p.Pname,
+      p.Pprice,
+      p.Ppicture
+    FROM favorites f
+    JOIN products p ON f.product_id = p.Pid
+    WHERE f.customer_id = ?
+  `,
             [customer_id]
         );
 
 
-        res.json(rows); // คืนข้อมูลรายการโปรด
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'ไม่สามารถดึงรายการโปรดได้' });
+        res.json(rows);
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "ไม่สามารถดึงรายการโปรดได้" });
     }
 });
-
-
-
-
-
 
 export default router;

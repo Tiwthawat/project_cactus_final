@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "cactus-secret-123";
 
-interface TokenPayload {
+export interface TokenPayload {
     Cid: number;
     Cusername: string;
     Cstatus: string;

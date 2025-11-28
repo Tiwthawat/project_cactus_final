@@ -13,6 +13,7 @@ import auctions from "./routes/auctions";
 import changePassword from './routes/change-password';
 import customerall from "./routes/customer_all";
 import favorites from './routes/favoritesRoutes';
+import forum from "./routes/forum";
 import login from "./routes/login";
 import me from "./routes/me";
 import orders from './routes/orders';
@@ -99,6 +100,7 @@ app.use('/favorites', favorites);
 app.use(auctions);
 app.use(adminorders);
 app.use(adminbids)
+app.use("/forum", forum);
 
 
 
