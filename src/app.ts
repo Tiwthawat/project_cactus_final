@@ -40,6 +40,8 @@ app.use('/profiles', express.static(path.join(__dirname, 'public', 'profiles')))
 app.use('/slips', express.static(path.join(__dirname, 'public', 'slips')));
 app.use('/qrs', express.static(path.join(__dirname, 'public', 'qrs')));
 app.use('/products', express.static(path.join(__dirname, 'public/products')));
+app.use("/reviews", express.static(path.join(__dirname, "public", "reviews")));
+
 
 
 

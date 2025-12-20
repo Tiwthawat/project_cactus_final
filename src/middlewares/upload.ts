@@ -55,6 +55,27 @@ const profileStorage = multer.diskStorage({
     },
 });
 
+// 👉 สำหรับอัปโหลดรูปรีวิวสินค้า หรือรีวิวร้าน
+const reviewDir = path.join(__dirname, '..', 'public', 'reviews');
+if (!fs.existsSync(reviewDir)) fs.mkdirSync(reviewDir, { recursive: true });
+
+const reviewStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, reviewDir),
+    filename: (req, file, cb) => {
+        const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+        cb(null, unique + path.extname(file.originalname));
+    },
+});
+
+export const uploadReviewImage = multer({
+    storage: reviewStorage,
+    limits: {
+        fileSize: 3 * 1024 * 1024,  // จำกัด 3MB
+        files: 5                  // จำกัด 3 รูปต่อครั้ง
+    }
+});
+
+
 
 
 export const uploadProfilePicture = multer({ storage: profileStorage });

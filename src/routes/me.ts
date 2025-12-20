@@ -7,6 +7,8 @@ const router = Router();
 const API_BASE = process.env.API_BASE_URL!;
 
 
+
+
 /* -------------------------
    Types
 --------------------------*/
@@ -17,6 +19,25 @@ interface TokenPayload {
     iat: number;
     exp: number;
 }
+
+interface OrderRow extends RowDataPacket {
+    Oid: number;
+    Cid: number;
+    receiver_name: string;
+    receiver_phone: string;
+    shipping_address: string;
+    shipping_status: string;
+    payment_status: string;
+    created_at: string;
+}
+interface OrderItemRow extends RowDataPacket {
+    Pname: string;
+    Ppicture: string | null;
+    amount: number;
+    price: number;
+}
+
+
 
 interface CustomerRow extends RowDataPacket {
     Cid: number;
@@ -329,6 +350,87 @@ router.get("/me/my-bidding", async (req, res, next) => {
         next(err);
     }
 });
+
+
+
+/* -------------------------------------------------
+   GET /me/orders/:Oid   (คำสั่งซื้อปกติ)
+--------------------------------------------------*/
+router.get("/me/orders/:id", async (req, res) => {
+    try {
+        const decoded = getUser(req);
+        if (!decoded) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const userId = decoded.Cid;
+        const { id } = req.params;
+
+        /* ---------------------------
+           1) โหลดข้อมูลคำสั่งซื้อหลัก
+        ----------------------------*/
+        const [orders] = await pool.query<OrderRow[]>(
+            `
+        SELECT 
+            Oid,
+            Oprice,
+            Odate,
+            Ostatus,
+            Oslip,
+            Opayment,
+            Otracking,
+            Oshipping
+        FROM orders
+        WHERE Oid = ? AND Cid = ?
+        LIMIT 1
+      `,
+            [id, userId]
+        );
+
+        if (orders.length === 0) {
+            return res.status(404).json({ message: "ไม่พบคำสั่งซื้อ" });
+        }
+
+        const order = orders[0];
+
+        /* ---------------------------
+           2) โหลดสินค้าในคำสั่งซื้อ
+        ----------------------------*/
+        const [items] = await pool.query<OrderItemRow[]>(
+            `
+        SELECT 
+            oi.Oquantity AS amount,
+            oi.Oprice AS price,
+            p.Pname,
+            p.Ppicture
+        FROM order_items oi
+        JOIN products p ON oi.Pid = p.Pid
+        WHERE oi.Oid = ?
+      `,
+            [id]
+        );
+
+        /* ---------------------------
+           3) ส่งข้อมูลกลับ
+        ----------------------------*/
+        return res.json({
+            Oid: order.Oid,
+            price: order.Oprice,
+            date: order.Odate,
+            status: order.Ostatus,
+            slip: order.Oslip,
+            payment: order.Opayment,
+            tracking: order.Otracking,
+            shipping: order.Oshipping,
+            items: items || []
+        });
+
+    } catch (err) {
+        console.error("ORDER DETAIL ERROR:", err);
+        return res.status(500).json({ message: "Internal Server Error" });
+    }
+});
+
 
 
 

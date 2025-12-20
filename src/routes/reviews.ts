@@ -1,66 +1,202 @@
-import { Router } from "express";
+import { Request, Router } from "express";
+import { RowDataPacket } from "mysql2";
 import { pool } from "../app";
+import { verifyToken } from "../middlewares/auth";
+import { uploadReviewImage } from "../middlewares/upload";
 
 const router = Router();
 
-// GET รีวิวทั้งหมด
-router.get("/reviews", async (_req, res, next) => {
-  try {
-    const connection = await pool.getConnection();
+// ===============================
+// TYPE จาก JWT ของโปรเจค
+// ===============================
+interface AuthUser {
+  Cid: number;
+  Cusername: string;
+  Cstatus: string;
+  iat?: number;
+  exp?: number;
+}
+
+// ===============================
+// Request ที่รองรับ user + multer(files)
+// ===============================
+interface RequestWithUser extends Request {
+  user?: AuthUser;
+  files?: Express.Multer.File[] | { [fieldname: string]: Express.Multer.File[] };
+}
+
+/* =====================================================
+   1) รีวิวร้าน (ครั้งเดียว)
+===================================================== */
+router.post(
+  "/reviews/store",
+  verifyToken,
+  uploadReviewImage.array("images", 5),
+  async (req: RequestWithUser, res) => {
     try {
-      const [result] = await connection.query("SELECT id, text, stars FROM reviews ORDER BY created_at DESC");
-      res.status(200).json(result);
-    } catch (error) {
-      next(error);
-    } finally {
-      connection.release();
-    }
-  } catch (error) {
-    next(error);
-  }
-});
+      const { stars, text } = req.body;
+      const Cid = req.user?.Cid;
+      const files = (req.files as Express.Multer.File[]) ?? [];
 
-// POST เพิ่มรีวิวใหม่
-router.post("/reviews", async (req, res, next) => {
-  const { text, stars } = req.body;
+      if (!Cid) return res.status(401).json({ message: "กรุณาล็อกอินก่อน" });
+      if (!stars || !text)
+        return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบ" });
 
-  if (!text || typeof stars !== "number" || stars < 1 || stars > 5) {
-    return res.status(400).json({ message: "ข้อมูลไม่ถูกต้อง" });
-  }
+      // ✔ ตรวจว่าผู้ใช้เคยรีวิวร้านไหม (order_id IS NULL)
+      const [exist] = await pool.query<RowDataPacket[]>(
+        "SELECT id FROM reviews WHERE Cid = ? AND order_id IS NULL LIMIT 1",
+        [Cid]
+      );
 
-  try {
-    const connection = await pool.getConnection();
-    try {
-      await connection.execute("INSERT INTO reviews (text, stars) VALUES (?, ?)", [text, stars]);
-      res.status(201).json({ message: "เพิ่มรีวิวสำเร็จ" });
-    } catch (error) {
-      next(error);
-    } finally {
-      connection.release();
-    }
-  } catch (error) {
-    next(error);
-  }
-});
+      if (exist.length > 0) {
+        return res.status(400).json({ message: "คุณรีวิวร้านไปแล้ว" });
+      }
 
-router.delete("/review/:id", async (req, res) => {
-  const orderId = Number(req.params.id);
+      const images = files.map((f) => `/reviews/${f.filename}`);
 
-  try {
-    const connection = await pool.getConnection();
-    try {
-      await connection.execute("DELETE FROM reviews WHERE order_id = ?", [orderId]);
-      res.status(200).json({ message: "ลบรีวิวสำเร็จ" });
+      await pool.query(
+        "INSERT INTO reviews (Cid, text, stars, order_id, images) VALUES (?, ?, ?, NULL, ?)",
+        [Cid, text, Number(stars), JSON.stringify(images)]
+      );
+
+      return res.status(201).json({ message: "รีวิวร้านสำเร็จ" });
     } catch (err) {
-      console.error("ลบรีวิวล้มเหลว:", err);
-      res.status(500).json({ error: "ไม่สามารถลบรีวิวได้" });
-    } finally {
-      connection.release();
+      console.error(err);
+      return res.status(500).json({ message: "เกิดข้อผิดพลาด" });
     }
-  } catch (error) {
-    res.status(500).json({ error: "ไม่สามารถเชื่อมต่อฐานข้อมูลได้" });
+  }
+);
+
+/* =====================================================
+   2) GET รีวิวร้านทั้งหมด
+===================================================== */
+router.get("/reviews/store", async (_req, res) => {
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT id, text, stars, images, created_at FROM reviews WHERE order_id IS NULL ORDER BY created_at DESC"
+    );
+
+    return res.json(rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "ดึงรีวิวร้านไม่สำเร็จ" });
   }
 });
 
+/* =====================================================
+   2.5) เช็กว่าผู้ใช้รีวิวร้านไปแล้วหรือยัง
+===================================================== */
+router.get("/reviews/store/user", verifyToken, async (req: RequestWithUser, res) => {
+  try {
+    const Cid = req.user?.Cid;
+
+    if (!Cid) return res.json({ reviewed: false });
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT id FROM reviews WHERE Cid = ? AND order_id IS NULL LIMIT 1",
+      [Cid]
+    );
+
+    return res.json({ reviewed: rows.length > 0 });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ reviewed: false });
+  }
+});
+
+/* =====================================================
+   3) GET รีวิวสินค้าใน order
+===================================================== */
+router.get("/orders/:id/review", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      "SELECT stars, text, images FROM reviews WHERE order_id = ? LIMIT 1",
+      [id]
+    );
+
+    return res.json(rows[0] || null);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "ดึงข้อมูลรีวิวล้มเหลว" });
+  }
+});
+
+/* =====================================================
+   4) POST รีวิวสินค้า (1 ครั้งต่อ order)
+===================================================== */
+router.post(
+  "/orders/:id/review",
+  verifyToken,
+  uploadReviewImage.array("images", 5),
+  async (req: RequestWithUser, res) => {
+    try {
+      const { id } = req.params;
+      const { stars, text } = req.body;
+      const Cid = req.user?.Cid;
+
+      const files = (req.files as Express.Multer.File[]) ?? [];
+
+      if (!Cid) return res.status(401).json({ message: "กรุณาล็อกอินก่อน" });
+      if (!stars || !text)
+        return res.status(400).json({ message: "ข้อมูลรีวิวไม่ครบ" });
+
+      // ✔ ตรวจว่าคำสั่งซื้อนี้ถูกรีวิวแล้วหรือยัง
+      const [exist] = await pool.query<RowDataPacket[]>(
+        "SELECT id FROM reviews WHERE order_id = ? LIMIT 1",
+        [id]
+      );
+
+      if (exist.length > 0) {
+        return res.status(400).json({ message: "คำสั่งซื้อนี้รีวิวไปแล้ว" });
+      }
+
+      const images = files.map((f) => `/reviews/${f.filename}`);
+
+      await pool.query(
+        "INSERT INTO reviews (Cid, text, stars, order_id, images) VALUES (?, ?, ?, ?, ?)",
+        [Cid, text, Number(stars), Number(id), JSON.stringify(images)]
+      );
+
+      return res.status(201).json({ message: "รีวิวสินค้าสำเร็จ" });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ message: "รีวิวสินค้าไม่สำเร็จ" });
+    }
+  }
+);
+
+/* =====================================================
+   5) DELETE รีวิวสินค้า (ลบได้เฉพาะเจ้าของ)
+===================================================== */
+router.delete(
+  "/orders/:id/review",
+  verifyToken,
+  async (req: RequestWithUser, res) => {
+    try {
+      const { id } = req.params;
+      const Cid = req.user?.Cid;
+
+      if (!Cid) return res.status(401).json({ message: "ไม่ได้รับอนุญาต" });
+
+      const [rows] = await pool.query<RowDataPacket[]>(
+        "SELECT id FROM reviews WHERE order_id = ? AND Cid = ? LIMIT 1",
+        [id, Cid]
+      );
+
+      if (rows.length === 0) {
+        return res.status(403).json({ message: "คุณไม่มีสิทธิ์ลบรีวิวนี้" });
+      }
+
+      await pool.query("DELETE FROM reviews WHERE order_id = ?", [id]);
+
+      return res.json({ message: "ลบรีวิวสำเร็จ" });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ message: "ลบรีวิวล้มเหลว" });
+    }
+  }
+);
 
 export default router;
