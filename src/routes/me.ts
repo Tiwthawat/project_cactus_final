@@ -150,6 +150,34 @@ router.get("/me", async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+});/* -------------------------
+   GET /me  (ข้อมูลผู้ใช้)
+--------------------------*/
+router.get("/me", async (req, res, next) => {
+    try {
+        const decoded = getUser(req);
+        if (!decoded) return res.status(401).json({ message: "Unauthorized" });
+
+        const conn = await pool.getConnection();
+        const [rows] = await conn.query<CustomerRow[]>(
+            `
+      SELECT 
+        Cid, Cusername, Cstatus, Cname, Caddress, Csubdistrict, 
+        Cdistrict, Cprovince, Czipcode, Cphone, Cdate, Cbirth, Cprofile
+      FROM customers
+      WHERE Cid = ?
+      `,
+            [decoded.Cid]
+        );
+        conn.release();
+
+        if (rows.length === 0)
+            return res.status(404).json({ message: "ไม่พบผู้ใช้" });
+
+        res.json({ user: rows[0] });
+    } catch (err) {
+        next(err);
+    }
 });
 
 /* ------------------------------------------
