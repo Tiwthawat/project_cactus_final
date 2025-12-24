@@ -1,13 +1,10 @@
-import "express";
+import type { TokenPayload } from "../middlewares/auth";
 
 declare module "express" {
     interface Request {
-        user?: {
-            Cid: number;
-            Cusername: string;
-            Cstatus: string;
-            iat?: number;
-            exp?: number;
-        };
+        user?: TokenPayload;
     }
 }
+
+export { };
+

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../app";
+import { verifyToken } from "../middlewares/auth";
+import { onlyAdmin } from "../middlewares/onlyAdmin";
 
 const router = Router();
 
@@ -13,6 +15,7 @@ interface AuctionOrderRow extends RowDataPacket {
     PROstatus: string;
     Cname: string;
 }
+router.use(verifyToken, onlyAdmin);
 
 router.get("/auction-orders", async (req, res) => {
     try {
@@ -300,12 +303,4 @@ router.patch("/auction-orders/:Aid/delivered", async (req, res) => {
         return res.status(500).json({ error: "เกิดข้อผิดพลาด" });
     }
 });
-
-
-
-3836
-
-
-
-
 export default router;
