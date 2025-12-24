@@ -1,9 +1,11 @@
 import { Request, Response, Router } from "express";
 import { RowDataPacket } from "mysql2";
 import { pool } from "../app";
+import { verifyToken } from "../middlewares/auth";
+import { onlyAdmin } from "../middlewares/onlyAdmin";
 
 const router = Router();
-
+router.use(verifyToken, onlyAdmin);
 /* -------------------------
    Types
 --------------------------*/

@@ -1,29 +1,18 @@
 import { Request, Router } from "express";
 import { RowDataPacket } from "mysql2";
 import { pool } from "../app";
-import { verifyToken } from "../middlewares/auth";
+import { TokenPayload, verifyToken } from "../middlewares/auth";
 import { uploadReviewImage } from "../middlewares/upload";
 
 const router = Router();
 
-// ===============================
-// TYPE จาก JWT ของโปรเจค
-// ===============================
-interface AuthUser {
-  Cid: number;
-  Cusername: string;
-  Cstatus: string;
-  iat?: number;
-  exp?: number;
-}
 
-// ===============================
-// Request ที่รองรับ user + multer(files)
-// ===============================
+
 interface RequestWithUser extends Request {
-  user?: AuthUser;
+  user?: TokenPayload;
   files?: Express.Multer.File[] | { [fieldname: string]: Express.Multer.File[] };
 }
+
 
 /* =====================================================
    1) รีวิวร้าน (ครั้งเดียว)
@@ -35,7 +24,14 @@ router.post(
   async (req: RequestWithUser, res) => {
     try {
       const { stars, text } = req.body;
-      const Cid = req.user?.Cid;
+      const u = req.user;
+      if (!u) return res.status(401).json({ message: "กรุณาล็อกอินก่อน" });
+
+      if (u.role !== "user") {
+        return res.status(403).json({ message: "User only" });
+      }
+
+      const Cid = u.Cid;
       const files = (req.files as Express.Multer.File[]) ?? [];
 
       if (!Cid) return res.status(401).json({ message: "กรุณาล็อกอินก่อน" });
@@ -88,7 +84,14 @@ router.get("/reviews/store", async (_req, res) => {
 ===================================================== */
 router.get("/reviews/store/user", verifyToken, async (req: RequestWithUser, res) => {
   try {
-    const Cid = req.user?.Cid;
+    const u = req.user;
+    if (!u) return res.status(401).json({ message: "กรุณาล็อกอินก่อน" });
+
+    if (u.role !== "user") {
+      return res.status(403).json({ message: "User only" });
+    }
+
+    const Cid = u.Cid;
 
     if (!Cid) return res.json({ reviewed: false });
 
@@ -134,7 +137,14 @@ router.post(
     try {
       const { id } = req.params;
       const { stars, text } = req.body;
-      const Cid = req.user?.Cid;
+      const u = req.user;
+      if (!u) return res.status(401).json({ message: "กรุณาล็อกอินก่อน" });
+
+      if (u.role !== "user") {
+        return res.status(403).json({ message: "User only" });
+      }
+
+      const Cid = u.Cid;
 
       const files = (req.files as Express.Multer.File[]) ?? [];
 
@@ -176,7 +186,14 @@ router.delete(
   async (req: RequestWithUser, res) => {
     try {
       const { id } = req.params;
-      const Cid = req.user?.Cid;
+      const u = req.user;
+      if (!u) return res.status(401).json({ message: "กรุณาล็อกอินก่อน" });
+
+      if (u.role !== "user") {
+        return res.status(403).json({ message: "User only" });
+      }
+
+      const Cid = u.Cid;
 
       if (!Cid) return res.status(401).json({ message: "ไม่ได้รับอนุญาต" });
 

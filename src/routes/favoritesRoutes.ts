@@ -2,8 +2,12 @@ import { NextFunction, Request, Response, Router } from "express";
 import { RowDataPacket } from "mysql2/promise";
 import { pool } from "../app";
 import { verifyToken } from "../middlewares/auth";
+import { requireCustomer } from "../utils/auth-guards";
+
+
 
 const router = Router();
+
 
 interface FavoriteRow extends RowDataPacket {
     product_id: number;
@@ -11,17 +15,19 @@ interface FavoriteRow extends RowDataPacket {
 
 // ⭐ Toggle favorite
 router.post("/", verifyToken, async (req: Request, res: Response, next: NextFunction) => {
-    const customer_id = req.user?.Cid; // ใช้จาก token
+    const u = requireCustomer(req);
+    if (!u) return res.status(403).json({ message: "เฉพาะลูกค้าเท่านั้น" });
+
+    const customer_id = u.Cid;
     const { product_id } = req.body;
 
-    if (!customer_id || !product_id) {
+    if (!product_id) {
         return res.status(400).json({ message: "ข้อมูลไม่ครบ" });
     }
 
     try {
         const conn = await pool.getConnection();
         try {
-            // เช็คว่ามีอยู่ไหม
             const [exist] = await conn.query<FavoriteRow[]>(
                 `SELECT * FROM favorites WHERE customer_id = ? AND product_id = ?`,
                 [customer_id, product_id]
@@ -41,7 +47,6 @@ router.post("/", verifyToken, async (req: Request, res: Response, next: NextFunc
             );
 
             return res.json({ message: "เพิ่มรายการโปรดแล้ว", is_favorite: true });
-
         } finally {
             conn.release();
         }
@@ -50,9 +55,14 @@ router.post("/", verifyToken, async (req: Request, res: Response, next: NextFunc
     }
 });
 
+
 // ⭐ ดึงรายการโปรด
 router.get("/", verifyToken, async (req: Request, res: Response) => {
-    const customer_id = req.user?.Cid;
+    const u = requireCustomer(req);
+    if (!u) return res.status(403).json({ message: "เฉพาะลูกค้าเท่านั้น" });
+
+    const customer_id = u.Cid;
+
 
     if (!customer_id) {
         return res.status(401).json({ message: "กรุณาเข้าสู่ระบบ" });

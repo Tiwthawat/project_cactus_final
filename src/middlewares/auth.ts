@@ -3,7 +3,9 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "cactus-secret-123";
 
-export interface TokenPayload {
+/** ---------- Types ---------- */
+export interface CustomerTokenPayload {
+    role: "user";
     Cid: number;
     Cusername: string;
     Cstatus: string;
@@ -11,14 +13,28 @@ export interface TokenPayload {
     exp?: number;
 }
 
+export interface AdminTokenPayload {
+    role: "admin";
+    Aid: number;
+    Ausername: string;
+    iat?: number;
+    exp?: number;
+}
+
+export type TokenPayload = CustomerTokenPayload | AdminTokenPayload;
+
+/** ---------- Express Request with user (no any) ---------- */
+export type AuthedRequest = Request & { user?: TokenPayload };
+
+/** ---------- Middleware ---------- */
 export const verifyToken = (req: Request, res: Response, next: NextFunction) => {
-    // 1) ลองอ่านจาก cookie ก่อน
+    // 1) cookie ก่อน
     let token = req.cookies?.token as string | undefined;
 
-    // 2) ถ้าไม่มีใน cookie → ลองอ่านจาก Authorization: Bearer xxx
+    // 2) Authorization: Bearer
     if (!token) {
         const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith("Bearer ")) {
+        if (authHeader?.startsWith("Bearer ")) {
             token = authHeader.split(" ")[1];
         }
     }
@@ -29,8 +45,8 @@ export const verifyToken = (req: Request, res: Response, next: NextFunction) => 
 
     try {
         const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
-        (req as any).user = decoded;
-        next();
+        (req as AuthedRequest).user = decoded;
+        return next();
     } catch (error) {
         console.error("JWT verify error:", error);
         return res.status(403).json({ message: "Token ไม่ถูกต้องหรือหมดอายุ" });

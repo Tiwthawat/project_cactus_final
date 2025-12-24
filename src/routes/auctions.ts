@@ -3,9 +3,8 @@ import { NextFunction, Request, Response, Router } from "express";
 import multer from "multer";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise"; // ← ใช้ type จาก mysql2/promise
 import { pool } from "../app";
-import { verifyToken } from "../middlewares/auth";
+import { verifyToken, type AuthedRequest } from "../middlewares/auth";
 import { uploadSlip } from "../middlewares/upload";
-
 
 
 const upload = multer({ dest: "uploads/" });
@@ -14,15 +13,6 @@ const upload = multer({ dest: "uploads/" });
 
 const router = Router();
 
-interface AuthRequest extends Request {
-  user?: {
-    Cid: number;
-    Cusername: string;
-    Cstatus: string;
-    iat?: number;
-    exp?: number;
-  };
-}
 
 
 /** แถวข้อมูลจากตาราง auctions (ไม่รวม join) */
@@ -460,12 +450,18 @@ router.post(
 router.post(
   "/auctions/:id/bid",
   verifyToken,
-  async (req: AuthRequest, res: Response, next: NextFunction) => {
+  async (req: AuthedRequest, res: Response, next: NextFunction) => {
     const conn = await pool.getConnection();
     try {
       const Aid = Number(req.params.id);
       const amount = Number(req.body.amount);
-      const userId = req.user!.Cid;   // << เปลี่ยนตรงนี้
+      const u = req.user;
+      if (!u || u.role !== "user") {
+        conn.release();
+        return res.status(403).json({ message: "เฉพาะลูกค้าเท่านั้น" });
+      }
+      const Cid = u.Cid;
+      // << เปลี่ยนตรงนี้
 
       if (!Aid || Number.isNaN(Aid)) {
         return res.status(400).json({ error: "Auction ID ไม่ถูกต้อง" });
@@ -505,7 +501,7 @@ router.post(
       await conn.query(
         `INSERT INTO bids (auction_id, user_id, amount)
          VALUES (?, ?, ?)`,
-        [Aid, userId, amount]
+        [Aid, Cid, amount]
       );
 
       await conn.query<ResultSetHeader>(
@@ -959,11 +955,18 @@ router.post(
   "/auction-checkout",
   verifyToken,
   uploadSlip.single("slip"),
-  async (req: AuthRequest, res: Response) => {
+  async (req: AuthedRequest, res: Response) => {
     const conn = await pool.getConnection();
     try {
       const { Aid } = req.body;
-      const Cid = req.user!.Cid;
+      const u = req.user;
+      if (!u || u.role !== "user") {
+        conn.release();
+        return res.status(403).json({ message: "เฉพาะลูกค้าเท่านั้น" });
+      }
+      const Cid = u.Cid;
+
+
       const slip = req.file;
 
       if (!Aid) {

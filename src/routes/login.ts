@@ -1,17 +1,28 @@
-import bcrypt from 'bcryptjs';
-import { Router } from 'express';
-import jwt from 'jsonwebtoken';
-import { FieldPacket, RowDataPacket } from 'mysql2';
-import { pool } from '../app';
+import bcrypt from "bcryptjs";
+import { NextFunction, Request, Response, Router } from "express";
+import jwt from "jsonwebtoken";
+import { FieldPacket, RowDataPacket } from "mysql2";
+import { pool } from "../app";
 
 const router = Router();
-interface CustomerPhoneRow extends RowDataPacket {
-  Cid: number;
-  Cusername: string;
-  Cphone: string;
+const JWT_SECRET = process.env.JWT_SECRET || "cactus-secret-123";
+
+/** ---------- Types ---------- */
+interface LoginBody {
+  Cusername?: string;
+  Cpassword?: string;
+  username?: string;
+  password?: string;
 }
 
-interface Customer extends RowDataPacket {
+interface AdminRow extends RowDataPacket {
+  Aid: number;
+  Ausername: string | null;
+  Apassword: string | null;
+  Aname: string | null;
+}
+
+interface CustomerRow extends RowDataPacket {
   Cid: number;
   Cusername: string;
   Cpassword: string;
@@ -19,63 +30,132 @@ interface Customer extends RowDataPacket {
   Cstatus: string;
 }
 
-// ดึง JWT_SECRET จาก .env
-const JWT_SECRET = process.env.JWT_SECRET!;
+interface LoginResponseBase {
+  message: string;
+  token: string;
+  role: "admin" | "user";
+}
+interface CustomerPhoneRow extends RowDataPacket {
+  Cid: number;
+  Cusername: string;
+  Cphone: string;
+}
 
-router.post('/login', async (req, res, next) => {
-  const { Cusername, Cpassword } = req.body;
 
-  if (!Cusername || !Cpassword) {
-    return res.status(400).json({ message: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
+
+/** ---------- Helper ---------- */
+function pickCredentials(body: LoginBody): { username: string; password: string } | null {
+  const username = body.Cusername ?? body.username;
+  const password = body.Cpassword ?? body.password;
+
+  if (typeof username !== "string" || typeof password !== "string") return null;
+  if (!username.trim() || !password.trim()) return null;
+
+  return { username: username.trim(), password: password.trim() };
+}
+
+function isBcryptHash(value: string): boolean {
+  return value.startsWith("$2a$") || value.startsWith("$2b$") || value.startsWith("$2y$");
+}
+
+/** ---------- POST /login (admin+user) ---------- */
+router.post("/login", async (req: Request, res: Response, next: NextFunction) => {
+  const creds = pickCredentials(req.body as LoginBody);
+  if (!creds) {
+    return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
   }
+
+  const { username, password } = creds;
 
   try {
-    const connection = await pool.getConnection();
+    const conn = await pool.getConnection();
     try {
-      const [rows]: [Customer[], FieldPacket[]] = await connection.query(
-        'SELECT * FROM customers WHERE Cusername = ?',
-        [Cusername]
+      // 1) เช็ค admin ก่อน
+      const [adminRows]: [AdminRow[], FieldPacket[]] = await conn.query(
+        "SELECT Aid, Ausername, Apassword, Aname FROM admin WHERE Ausername = ? LIMIT 1",
+        [username]
       );
 
-      if (rows.length === 0) {
-        return res.status(401).json({ message: 'ไม่พบผู้ใช้งานนี้' });
+      if (adminRows.length > 0) {
+        const admin = adminRows[0];
+        const stored = admin.Apassword ?? "";
+
+        let ok = false;
+        if (stored && isBcryptHash(stored)) {
+          ok = await bcrypt.compare(password, stored);
+        } else {
+          // ✅ รองรับกรณีเก่าที่เป็น plain text
+          ok = stored === password;
+        }
+
+        if (!ok) return res.status(401).json({ message: "รหัสผ่านไม่ถูกต้อง" });
+
+        const token = jwt.sign(
+          { role: "admin", Aid: admin.Aid, Ausername: admin.Ausername ?? "" },
+          JWT_SECRET,
+          { expiresIn: "7d" }
+        );
+
+        const resp: LoginResponseBase & {
+          admin: { Aid: number; Ausername: string; Aname: string | null };
+        } = {
+          message: "เข้าสู่ระบบสำเร็จ",
+          token,
+          role: "admin",
+          admin: {
+            Aid: admin.Aid,
+            Ausername: admin.Ausername ?? "",
+            Aname: admin.Aname ?? null,
+          },
+        };
+
+        return res.status(200).json(resp);
       }
 
-      const user = rows[0];
-      const isMatch = await bcrypt.compare(Cpassword, user.Cpassword);
+      // 2) ถ้าไม่ใช่ admin → เช็ค customers
+      const [custRows]: [CustomerRow[], FieldPacket[]] = await conn.query(
+        "SELECT Cid, Cusername, Cpassword, Cname, Cstatus FROM customers WHERE Cusername = ? LIMIT 1",
+        [username]
+      );
 
-      if (!isMatch) {
-        return res.status(401).json({ message: 'รหัสผ่านไม่ถูกต้อง' });
+      if (custRows.length === 0) {
+        return res.status(401).json({ message: "ไม่พบผู้ใช้งานนี้" });
       }
 
-      // ✅ Sign JWT
+      const user = custRows[0];
+      const ok = await bcrypt.compare(password, user.Cpassword);
+      if (!ok) return res.status(401).json({ message: "รหัสผ่านไม่ถูกต้อง" });
+
       const token = jwt.sign(
-        {
+        { role: "user", Cid: user.Cid, Cusername: user.Cusername, Cstatus: user.Cstatus },
+        JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      const resp: LoginResponseBase & {
+        user: Omit<CustomerRow, "Cpassword">;
+      } = {
+        message: "เข้าสู่ระบบสำเร็จ",
+        token,
+        role: "user",
+        user: {
           Cid: user.Cid,
           Cusername: user.Cusername,
+          Cname: user.Cname,
           Cstatus: user.Cstatus,
         },
-        JWT_SECRET,
-        { expiresIn: '1h' }
-      );
+      };
 
-      // ✅ ลบ password ออกจาก response
-      const { Cpassword: _pw, ...safeUser } = user;
-
-      return res.status(200).json({
-        message: 'เข้าสู่ระบบสำเร็จ',
-        user: safeUser,
-        token,
-      });
-    } catch (error) {
-      next(error);
+      return res.status(200).json(resp);
     } finally {
-      connection.release();
+      conn.release();
     }
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 });
+
+
 
 router.post('/auth/forgot-password', async (req, res) => {
   try {

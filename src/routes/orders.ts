@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../app";
+import { verifyToken } from "../middlewares/auth";
+import { onlyAdmin } from "../middlewares/onlyAdmin";
 
 const router = Router();
 
@@ -541,7 +543,7 @@ router.patch('/orders/:id/status', async (req, res) => {
 
 
 // GET /stats/full — รวมข้อมูลทั้งหมดของร้าน
-router.get('/stats/full', async (req, res) => {
+router.get('/stats/full', verifyToken, onlyAdmin, async (req, res) => {
     try {
         // 1) ยอดขายเฉพาะ "ขายสำเร็จ"
         const [orderStats] = await pool.query<RowDataPacket[]>(`

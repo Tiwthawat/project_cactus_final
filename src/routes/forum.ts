@@ -1,18 +1,26 @@
 import { Request, Response, Router } from "express";
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../app";
-import { TokenPayload, verifyToken } from "../middlewares/auth";
+import { verifyToken } from "../middlewares/auth";
 
-// ขยาย req.user
-declare global {
-    namespace Express {
-        interface Request {
-            user?: TokenPayload;
-        }
-    }
-}
+
+
 
 const router = Router();
+
+import type { CustomerTokenPayload } from "../middlewares/auth";
+
+function requireUser(req: Request): CustomerTokenPayload | null {
+    const u = req.user;
+    if (!u) return null;
+    return u.role === "user" ? u : null;
+}
+
+function isAdmin(req: Request): boolean {
+    const u = req.user;
+    return !!u && u.role === "admin";
+}
+
 
 /* ==================================
    Interface
@@ -52,7 +60,11 @@ router.put("/reply/:Replyid", verifyToken, async (req: Request, res: Response) =
     );
 
     if (reply.length === 0) return res.status(404).json({ error: "Reply not found" });
-    if (reply[0].Cid !== req.user!.Cid) return res.status(403).json({ error: "Forbidden" });
+    const u = requireUser(req);
+    if (!u) return res.status(401).json({ error: "Unauthorized" });
+
+    if (reply[0].Cid !== u.Cid) return res.status(403).json({ error: "Forbidden" });
+
 
     await pool.query(
         "UPDATE replies SET Replydetails = ? WHERE Replyid = ?",
@@ -75,8 +87,14 @@ router.delete("/reply/:Replyid", verifyToken, async (req: Request, res: Response
 
     if (reply.length === 0) return res.status(404).json({ error: "Reply not found" });
 
-    const isOwner = reply[0].Cid === req.user!.Cid;
-    const isAdmin = req.user!.Cstatus === "admin";
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    const u = req.user;
+    const isOwner = u.role === "user" && reply[0].Cid === u.Cid;
+    const admin = isAdmin(req); // true ถ้า role === "admin"
+
+    if (!isOwner && !admin) return res.status(403).json({ error: "Forbidden" });
+
 
     if (!isOwner && !isAdmin) return res.status(403).json({ error: "Forbidden" });
 
@@ -173,16 +191,20 @@ router.get("/:Askid", async (req: Request, res: Response) => {
 router.post("/", verifyToken, async (req: Request, res: Response) => {
     const { Asktopic, Askdetails } = req.body;
 
-    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-    if (!Asktopic || !Askdetails) return res.status(400).json({ error: "Missing fields" });
+    const u = requireUser(req);
+    if (!u) return res.status(401).json({ error: "Unauthorized" });
+
+    if (!Asktopic || !Askdetails) {
+        return res.status(400).json({ error: "Missing fields" });
+    }
 
     try {
         const [result] = await pool.query<ResultSetHeader>(
             `
-            INSERT INTO questions (Cid, Asktopic, Askdetails)
-            VALUES (?, ?, ?)
-            `,
-            [req.user.Cid, Asktopic, Askdetails]
+      INSERT INTO questions (Cid, Asktopic, Askdetails)
+      VALUES (?, ?, ?)
+      `,
+            [u.Cid, Asktopic, Askdetails]
         );
 
         res.json({ success: true, Askid: result.insertId });
@@ -192,6 +214,7 @@ router.post("/", verifyToken, async (req: Request, res: Response) => {
     }
 });
 
+
 /* ==================================
    6) POST /forum/:Askid/reply (ตอบกระทู้)
 ================================== */
@@ -199,17 +222,19 @@ router.post("/:Askid/reply", verifyToken, async (req: Request, res: Response) =>
     const Askid = Number(req.params.Askid);
     const { Replydetails } = req.body;
 
+    const u = requireUser(req);
+    if (!u) return res.status(401).json({ error: "Unauthorized" });
+
     if (isNaN(Askid)) return res.status(400).json({ error: "Invalid Askid" });
-    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     if (!Replydetails) return res.status(400).json({ error: "Missing reply" });
 
     try {
         const [result] = await pool.query<ResultSetHeader>(
             `
-            INSERT INTO replies (Askid, Cid, Replydetails)
-            VALUES (?, ?, ?)
-            `,
-            [Askid, req.user.Cid, Replydetails]
+      INSERT INTO replies (Askid, Cid, Replydetails)
+      VALUES (?, ?, ?)
+      `,
+            [Askid, u.Cid, Replydetails]
         );
 
         res.json({ success: true, Replyid: result.insertId });
@@ -219,6 +244,7 @@ router.post("/:Askid/reply", verifyToken, async (req: Request, res: Response) =>
     }
 });
 
+
 /* ==================================
    7) PUT /forum/:Askid (แก้ไขกระทู้)
 ================================== */
@@ -226,13 +252,21 @@ router.put("/:Askid", verifyToken, async (req: Request, res: Response) => {
     const Askid = Number(req.params.Askid);
     const { Asktopic, Askdetails } = req.body;
 
+    const u = requireUser(req);
+    if (!u) return res.status(401).json({ error: "Unauthorized" });
+
     const [owner] = await pool.query<RowDataPacket[]>(
         "SELECT Cid FROM questions WHERE Askid = ?",
         [Askid]
     );
 
-    if (owner.length === 0) return res.status(404).json({ error: "Topic not found" });
-    if (owner[0].Cid !== req.user!.Cid) return res.status(403).json({ error: "Forbidden" });
+    if (owner.length === 0) {
+        return res.status(404).json({ error: "Topic not found" });
+    }
+
+    if (owner[0].Cid !== u.Cid) {
+        return res.status(403).json({ error: "Forbidden" });
+    }
 
     await pool.query(
         "UPDATE questions SET Asktopic = ?, Askdetails = ? WHERE Askid = ?",
@@ -242,11 +276,15 @@ router.put("/:Askid", verifyToken, async (req: Request, res: Response) => {
     res.json({ success: true });
 });
 
+
 /* ==================================
    8) DELETE /forum/:Askid (ลบกระทู้)
 ================================== */
 router.delete("/:Askid", verifyToken, async (req: Request, res: Response) => {
     const Askid = Number(req.params.Askid);
+
+    const u = requireUser(req);
+    if (!u) return res.status(401).json({ error: "Unauthorized" });
 
     const [rows] = await pool.query<RowDataPacket[]>(
         "SELECT Cid FROM questions WHERE Askid = ?",
@@ -254,7 +292,10 @@ router.delete("/:Askid", verifyToken, async (req: Request, res: Response) => {
     );
 
     if (rows.length === 0) return res.status(404).json({ error: "Topic not found" });
-    if (rows[0].Cid !== req.user!.Cid) return res.status(403).json({ error: "Forbidden" });
+
+    if (rows[0].Cid !== u.Cid) {
+        return res.status(403).json({ error: "Forbidden" });
+    }
 
     await pool.query("DELETE FROM replies WHERE Askid = ?", [Askid]);
     await pool.query("DELETE FROM questions WHERE Askid = ?", [Askid]);
@@ -263,3 +304,4 @@ router.delete("/:Askid", verifyToken, async (req: Request, res: Response) => {
 });
 
 export default router;
+
