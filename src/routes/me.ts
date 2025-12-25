@@ -119,7 +119,7 @@ router.use(verifyToken);
 /* -------------------------
    GET /me  (ข้อมูลผู้ใช้)
 --------------------------*/
-router.get("/me", async (req, res, next) => {
+router.get("/", async (req, res, next) => {
     try {
         const decoded = requireUserFromReq(req);
         if (!decoded) return res.status(403).json({ message: "User only" });
@@ -147,7 +147,7 @@ router.get("/me", async (req, res, next) => {
 /* ------------------------------------------
    GET /me/my-auction-wins  (รายการที่ชนะ)
 -------------------------------------------*/
-router.get("/me/my-auction-wins", async (req, res, next) => {
+router.get("/my-auction-wins", async (req, res, next) => {
     try {
         const decoded = requireUserFromReq(req);
         if (!decoded) return res.status(403).json({ message: "User only" });
@@ -183,7 +183,7 @@ router.get("/me/my-auction-wins", async (req, res, next) => {
 /* --------------------------------------------------
    GET /me/my-auction-wins/:Aid   (รายละเอียดแต่ละรายการ)
 ---------------------------------------------------*/
-router.get("/me/my-auction-wins/:Aid", async (req, res, next) => {
+router.get("/my-auction-wins/:Aid", async (req, res, next) => {
     try {
         const decoded = requireUserFromReq(req);
         if (!decoded) return res.status(403).json({ message: "User only" });
@@ -227,7 +227,7 @@ router.get("/me/my-auction-wins/:Aid", async (req, res, next) => {
 /* --------------------------------------------------
    PATCH /me/my-auction-wins/:Aid/received (ผู้ใช้กดยืนยันรับสินค้า)
 ---------------------------------------------------*/
-router.patch("/me/my-auction-wins/:Aid/received", async (req, res) => {
+router.patch("/my-auction-wins/:Aid/received", async (req, res) => {
     try {
         const decoded = requireUserFromReq(req);
         if (!decoded) return res.status(403).json({ message: "User only" });
@@ -264,7 +264,7 @@ router.patch("/me/my-auction-wins/:Aid/received", async (req, res) => {
 /* ------------------------------------------
    GET /me/my-bidding (รายการที่เคยบิด)
 -------------------------------------------*/
-router.get("/me/my-bidding", async (req, res, next) => {
+router.get("/my-bidding", async (req, res, next) => {
     try {
         const decoded = requireUserFromReq(req);
         if (!decoded) return res.status(403).json({ message: "User only" });
@@ -341,7 +341,7 @@ router.get("/me/my-bidding", async (req, res, next) => {
 /* -------------------------------------------------
    GET /me/orders/:id   (คำสั่งซื้อปกติ)
 --------------------------------------------------*/
-router.get("/me/orders/:id", async (req, res) => {
+router.get("/orders/:id", async (req, res) => {
     try {
         const decoded = requireUserFromReq(req);
         if (!decoded) return res.status(403).json({ message: "User only" });

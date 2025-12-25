@@ -46,7 +46,42 @@ export interface ForumReply extends RowDataPacket {
     Cname: string;
     Cprofile: string | null;
 }
+/* ==================================
+   3) GET /forum/list (pagination + search + sort)
+================================== */
+router.get("/list", async (req: Request, res: Response) => {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
 
+    const search = String(req.query.search || "");
+    const sort = String(req.query.sort || "latest");
+
+    let order = "q.Askid DESC";
+    if (sort === "popular") order = "q.Askvisits DESC";
+    if (sort === "active") order = "ReplyCount DESC";
+
+    try {
+        const [rows] = await pool.query<ForumQuestion[]>(
+            `
+            SELECT 
+                q.*, c.Cname, c.Cprofile,
+                (SELECT COUNT(*) FROM replies WHERE Askid = q.Askid) AS ReplyCount
+            FROM questions q
+            JOIN customers c ON q.Cid = c.Cid
+            WHERE q.Asktopic LIKE ?
+            ORDER BY ${order}
+            LIMIT ? OFFSET ?
+            `,
+            [`%${search}%`, limit, offset]
+        );
+
+        res.json(rows);
+    } catch (err) {
+        console.error("[GET /forum/list] ERROR:", err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
 /* ==================================
    ⭐ 1) แก้ไขคอมเมนต์ ต้องมาก่อน /:Askid
 ================================== */
@@ -103,42 +138,7 @@ router.delete("/reply/:Replyid", verifyToken, async (req: Request, res: Response
     res.json({ success: true });
 });
 
-/* ==================================
-   3) GET /forum/list (pagination + search + sort)
-================================== */
-router.get("/list", async (req: Request, res: Response) => {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
-    const offset = (page - 1) * limit;
 
-    const search = String(req.query.search || "");
-    const sort = String(req.query.sort || "latest");
-
-    let order = "q.Askid DESC";
-    if (sort === "popular") order = "q.Askvisits DESC";
-    if (sort === "active") order = "ReplyCount DESC";
-
-    try {
-        const [rows] = await pool.query<ForumQuestion[]>(
-            `
-            SELECT 
-                q.*, c.Cname, c.Cprofile,
-                (SELECT COUNT(*) FROM replies WHERE Askid = q.Askid) AS ReplyCount
-            FROM questions q
-            JOIN customers c ON q.Cid = c.Cid
-            WHERE q.Asktopic LIKE ?
-            ORDER BY ${order}
-            LIMIT ? OFFSET ?
-            `,
-            [`%${search}%`, limit, offset]
-        );
-
-        res.json(rows);
-    } catch (err) {
-        console.error("[GET /forum/list] ERROR:", err);
-        res.status(500).json({ error: "Database error" });
-    }
-});
 
 /* ==================================
    4) GET /forum/:Askid (เพิ่มยอดวิว + โหลดโพสต์ + คอมเมนต์)

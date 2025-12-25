@@ -33,6 +33,7 @@ import zipcode from './routes/zipcode';
 
 export const app = express();
 app.use(cors({
+
 	origin: process.env.CLIENT_ORIGIN,
 	credentials: true,
 }));
@@ -88,7 +89,8 @@ app.use(productall);
 app.use(customerall);
 app.use("/", productID);
 app.use(reviews);
-app.use(me);
+app.use("/me", me);
+app.use("/forum", forum);
 app.use(updateProfile);
 app.use(changePassword);
 app.use('/zipcode', zipcode);
@@ -102,7 +104,7 @@ app.use('/favorites', favorites);
 app.use(auctions);
 app.use(adminorders);
 app.use(adminbids)
-app.use("/forum", forum);
+
 
 
 
