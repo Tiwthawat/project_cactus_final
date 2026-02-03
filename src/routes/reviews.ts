@@ -216,4 +216,77 @@ router.delete(
   }
 );
 
+router.get("/products/:pid/reviews/summary", async (req, res) => {
+  try {
+    const pid = Number(req.params.pid);
+    if (!pid) return res.status(400).json({ message: "pid ไม่ถูกต้อง" });
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT
+        COALESCE(AVG(r.stars), 0) AS avg_stars,
+        COUNT(*) AS total
+      FROM reviews r
+      JOIN order_items oi
+        ON oi.Oid = r.order_id
+       AND oi.Pid = ?
+      WHERE r.order_id IS NOT NULL
+      `,
+      [pid]
+    );
+
+    return res.json({
+      avg_stars: Number(rows?.[0]?.avg_stars ?? 0),
+      total: Number(rows?.[0]?.total ?? 0),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "ดึงสรุปรีวิวล้มเหลว" });
+  }
+});
+
+router.get("/products/:pid/reviews", async (req, res) => {
+  try {
+    const pid = Number(req.params.pid);
+    if (!pid) return res.status(400).json({ message: "pid ไม่ถูกต้อง" });
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT
+        r.id,
+        r.text,
+        r.stars,
+        r.created_at,
+        r.order_id,
+        r.images
+      FROM reviews r
+      JOIN order_items oi
+        ON oi.Oid = r.order_id
+       AND oi.Pid = ?
+      WHERE r.order_id IS NOT NULL
+      ORDER BY r.created_at DESC
+      `,
+      [pid]
+    );
+
+    // images เป็น JSON → ส่งออกเป็น array ให้ฝั่งหน้าใช้ได้เลย
+    const mapped = rows.map((r: any) => ({
+      ...r,
+      images:
+        typeof r.images === "string"
+          ? JSON.parse(r.images)
+          : Array.isArray(r.images)
+          ? r.images
+          : [],
+    }));
+
+    return res.json(mapped);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "ดึงรีวิวสินค้าล้มเหลว" });
+  }
+});
+
+
+
 export default router;

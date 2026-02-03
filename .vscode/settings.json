@@ -10,5 +10,8 @@
 	},
 	"[json]": {
 		"editor.defaultFormatter": "vscode.json-language-features"
-	}
+	},
+	"conventionalCommits.scopes": [
+		"3/2/2569update"
+	]
 }

@@ -6,20 +6,45 @@ import { onlyAdmin } from "../middlewares/onlyAdmin";
 
 const router = Router();
 
-interface AuctionOrderRow extends RowDataPacket {
+
+
+interface AuctionOrderListRow extends RowDataPacket {
     Aid: number;
     PROid: number;
     PROname: string;
-    winner_id: number;
+    payment_status: string;
+    shipping_status: string | null;
     current_price: number;
-    PROstatus: string;
     Cname: string;
+    winner_id: number;
+    end_time: string | null;
+    paid_at: string | null;
 }
 router.use(verifyToken, onlyAdmin);
 
 router.get("/auction-orders", async (req, res) => {
     try {
-        const [rows] = await pool.query<AuctionOrderRow[]>(`
+        const hasYear = typeof req.query.year !== "undefined";
+        let dateFilter = "";
+        let params: any[] = [];
+
+        if (hasYear) {
+            const year = Number(req.query.year);
+
+            if (!Number.isFinite(year) || year < 2000 || year > 3000) {
+                return res.status(400).json({ message: "year ไม่ถูกต้อง" });
+            }
+
+            // ช่วงปีแบบ [start, end)
+            const start = `${year}-01-01 00:00:00`;
+            const end = `${year + 1}-01-01 00:00:00`;
+
+            dateFilter = ` AND a.end_time >= ? AND a.end_time < ?`;
+            params = [start, end];
+        }
+
+        const [rows] = await pool.query<AuctionOrderListRow[]>(
+            `
       SELECT 
         a.Aid,
         a.PROid,
@@ -28,20 +53,38 @@ router.get("/auction-orders", async (req, res) => {
         p.shipping_status,
         a.current_price,
         c.Cname,
-        c.Cid AS winner_id
+        c.Cid AS winner_id,
+        a.end_time,
+
+        -- ✅ ดึง paid_at ล่าสุดของ Aid นั้น ๆ (ชัวร์กว่า Payid อย่างเดียว)
+        (
+          SELECT ap.paid_at
+          FROM auction_payments ap
+          WHERE ap.Aid = a.Aid
+          ORDER BY ap.paid_at DESC, ap.Payid DESC
+          LIMIT 1
+        ) AS paid_at
+
       FROM auctions a
       JOIN auction_products p ON a.PROid = p.PROid
       JOIN customers c ON a.winner_id = c.Cid
-      WHERE a.winner_id IS NOT NULL
-      ORDER BY a.Aid DESC
-    `);
 
-        res.json(rows);
+      WHERE a.winner_id IS NOT NULL
+        AND a.end_time IS NOT NULL
+      ${dateFilter}
+
+      ORDER BY a.end_time DESC, a.Aid DESC
+      `,
+            params
+        );
+
+        return res.json(rows);
     } catch (err) {
         console.error("❌ ERROR GET auction-orders:", err);
-        res.status(500).json({ message: "โหลดข้อมูลล้มเหลว" });
+        return res.status(500).json({ message: "โหลดข้อมูลล้มเหลว" });
     }
 });
+
 
 // อัปเดตสถานะสินค้า (PROstatus)
 router.put("/auction-orders/:Aid", async (req, res) => {

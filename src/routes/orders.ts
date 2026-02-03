@@ -5,6 +5,19 @@ import { verifyToken } from "../middlewares/auth";
 import { onlyAdmin } from "../middlewares/onlyAdmin";
 
 const router = Router();
+function parseYear(input: unknown): number {
+    const y = Number(input);
+    const now = new Date().getFullYear();
+    if (!Number.isFinite(y)) return now;
+    if (y < 2000 || y > 2100) return now; // กันปีเพี้ยน
+    return Math.trunc(y);
+}
+
+function yearRange(year: number) {
+    const start = `${year}-01-01 00:00:00`;
+    const end = `${year + 1}-01-01 00:00:00`;
+    return { start, end };
+}
 
 
 interface Order extends RowDataPacket {
@@ -135,16 +148,39 @@ router.put('/orders/:id', async (req, res, next) => {
 });
 
 
-router.get("/orders/all", async (req, res, next) => {
+router.get("/orders/all", verifyToken, onlyAdmin, async (req, res) => {
+    const year = parseYear(req.query.year);
+    const { start, end } = yearRange(year);
+
+    const limitRaw = req.query.limit;
+    const limit = limitRaw ? Math.min(Math.max(Number(limitRaw), 1), 200) : null;
+
+    // ✅ เพิ่ม filter แบบ dashboard
+    const type = String(req.query.type || "all");
+    const isLatestNew = type === "latest_new";
+
     const connection = await pool.getConnection();
     try {
-        const [orders] = await connection.query<AdminOrder[]>(
-            `SELECT o.Oid, o.Oprice, o.Ostatus,o.Opayment, o.Odate, c.Cname
-       FROM orders o
-       JOIN customers c ON o.Cid = c.Cid
-       ORDER BY o.Oid DESC`
-        );
+        const where: string[] = ["o.Odate >= ? AND o.Odate < ?"];
+        const params: any[] = [start, end];
 
+        if (isLatestNew) {
+            // ✅ ออเดอร์ใหม่/งานที่ยังต้องทำ (ไม่เอา delivered/cancelled/failed)
+            where.push(`o.Ostatus IN ('pending_payment','payment_review','paid')`);
+        }
+
+        const sql = `
+      SELECT o.Oid, o.Oprice, o.Ostatus, o.Opayment, o.Odate, c.Cname
+      FROM orders o
+      JOIN customers c ON o.Cid = c.Cid
+      WHERE ${where.join(" AND ")}
+      ORDER BY o.Odate DESC
+      ${limit ? "LIMIT ?" : ""}
+    `;
+
+        if (limit) params.push(limit);
+
+        const [orders] = await connection.query<AdminOrder[]>(sql, params);
         res.status(200).json(orders);
     } catch (err) {
         console.error("❌ ADMIN GET ALL ORDERS ERROR:", err);
@@ -153,6 +189,8 @@ router.get("/orders/all", async (req, res, next) => {
         connection.release();
     }
 });
+
+
 
 
 router.post("/orders", async (req, res, next) => {
@@ -542,104 +580,298 @@ router.patch('/orders/:id/status', async (req, res) => {
 
 
 
-// GET /stats/full — รวมข้อมูลทั้งหมดของร้าน
-router.get('/stats/full', verifyToken, onlyAdmin, async (req, res) => {
+// GET /stats/full — รวมข้อมูลทั้งหมดของร้าน (optional ?year=YYYY)
+router.get("/stats/full", verifyToken, onlyAdmin, async (req, res) => {
+    const safe = async <T extends RowDataPacket[]>(
+        name: string,
+        sql: string,
+        params: any[] = []
+    ) => {
+        try {
+            const [rows] = await pool.query<T>(sql, params);
+            return rows;
+        } catch (e) {
+            console.error(`⚠️ STATS SKIP @ ${name}:`, e);
+            return [] as unknown as T;
+        }
+    };
+
+    // ---------- optional year ----------
+    const hasYear = typeof req.query.year !== "undefined";
+    let year: number | null = null;
+    let start = "";
+    let end = "";
+
+    if (hasYear) {
+        year = parseYear(req.query.year);
+        const r = yearRange(year);
+        start = r.start;
+        end = r.end;
+    }
+
+    // helper: date filter
+    const orderDateFilter = hasYear ? `WHERE Odate >= ? AND Odate < ?` : ``;
+    const orderDateParams = hasYear ? [start, end] : [];
+
+    const auctionDateFilter = hasYear ? `WHERE a.end_time >= ? AND a.end_time < ?` : ``;
+    const auctionDateParams = hasYear ? [start, end] : [];
+
     try {
-        // 1) ยอดขายเฉพาะ "ขายสำเร็จ"
-        const [orderStats] = await pool.query<RowDataPacket[]>(`
-            SELECT
-                COUNT(*) AS totalOrders,
+        /* ---------------- 1) Orders (ขายปกติ) ---------------- */
+        const [orderStats] = await pool.query<RowDataPacket[]>(
+            `
+      SELECT
+        COUNT(*) AS totalOrders,
 
-                -- รายได้จริง (bank/transfer ต้อง paid, cod ต้อง shipped/delivered)
-                SUM(
-                    CASE 
-                        WHEN (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid')
-                          OR (Opayment = 'cod' AND Ostatus IN ('shipped','delivered'))
-                        THEN Oprice ELSE 0 END
-                ) AS orderSales,
+        SUM(
+          CASE 
+            WHEN (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid')
+              OR (Opayment = 'cod' AND Ostatus IN ('shipping','delivered'))
+            THEN Oprice ELSE 0 END
+        ) AS orderSales,
 
-                -- จำนวนออเดอร์ยกเลิก
-                SUM(CASE WHEN Ostatus = 'cancelled' THEN 1 ELSE 0 END) AS cancelledOrders,
+        SUM(CASE WHEN Ostatus = 'cancelled' THEN 1 ELSE 0 END) AS cancelledOrders,
+        SUM(CASE WHEN Ostatus = 'failed' THEN 1 ELSE 0 END) AS failedOrders,
 
-                -- จำนวนออเดอร์ล้มเหลว
-                SUM(CASE WHEN Ostatus = 'failed' THEN 1 ELSE 0 END) AS failedOrders,
+        SUM(
+          CASE 
+            WHEN DATE(Odate) = CURDATE()
+              AND (
+                (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid') 
+                OR (Opayment = 'cod' AND Ostatus IN ('shipping','delivered'))
+              )
+            THEN Oprice ELSE 0 END
+        ) AS orderToday,
 
-                -- รายได้วันนี้ (เฉพาะขายสำเร็จ)
-                SUM(
-                    CASE 
-                        WHEN DATE(Odate) = CURDATE()
-                         AND (
-                                (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid') 
-                                OR 
-                                (Opayment = 'cod' AND Ostatus IN ('shipped','delivered'))
-                             )
-                        THEN Oprice ELSE 0 END
-                ) AS orderToday,
+        SUM(
+          CASE 
+            WHEN MONTH(Odate) = MONTH(CURDATE())
+              AND YEAR(Odate) = YEAR(CURDATE())
+              AND (
+                (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid') 
+                OR (Opayment = 'cod' AND Ostatus IN ('shipping','delivered'))
+              )
+            THEN Oprice ELSE 0 END
+        ) AS orderMonth,
 
-                -- รายเดือน (เฉพาะขายสำเร็จ)
-                SUM(
-                    CASE 
-                        WHEN MONTH(Odate) = MONTH(CURDATE())
-                         AND YEAR(Odate) = YEAR(CURDATE())
-                         AND (
-                                (Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid') 
-                                OR 
-                                (Opayment = 'cod' AND Ostatus IN ('shipped','delivered'))
-                             )
-                        THEN Oprice ELSE 0 END
-                ) AS orderMonth,
+        SUM(
+          CASE 
+            WHEN Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid'
+            THEN Oprice ELSE 0 END
+        ) AS bankSales,
 
-                -- รายได้จากการโอน/ชำระผ่านธนาคาร
-                SUM(
-                    CASE 
-                        WHEN Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid'
-                        THEN Oprice ELSE 0 END
-                ) AS bankSales,
+        SUM(
+          CASE 
+            WHEN Opayment = 'cod' AND Ostatus IN ('shipping','delivered')
+            THEN Oprice ELSE 0 END
+        ) AS codSales
 
-                -- รายได้แบบเก็บเงินปลายทาง (ต้อง shipped/delivered เท่านั้น)
-                SUM(
-                    CASE 
-                        WHEN Opayment = 'cod' AND Ostatus IN ('shipped','delivered')
-                        THEN Oprice ELSE 0 END
-                ) AS codSales
+      FROM orders
+      ${orderDateFilter}
+      `,
+            orderDateParams
+        );
 
-            FROM orders
-        `);
+        /* ---------------- 2) Auctions ---------------- */
+        const [auctionStats] = await pool.query<RowDataPacket[]>(
+            `
+      SELECT 
+        COUNT(*) AS totalAuctions,
 
-        // 2) รายได้ประมูล
-        const [auctionStats] = await pool.query<RowDataPacket[]>(`
-            SELECT 
-                COUNT(*) AS totalAuctions,
+        SUM(
+          CASE WHEN ap.PROstatus = 'paid'
+            THEN a.current_price ELSE 0 END
+        ) AS auctionSales,
 
-                -- รายได้ประมูลเฉพาะจ่ายแล้ว
-                SUM(
-                    CASE WHEN ap.PROstatus = 'paid'
-                        THEN a.current_price ELSE 0 END
-                ) AS auctionSales,
+        SUM(CASE WHEN ap.PROstatus = 'paid' THEN 1 ELSE 0 END) AS soldAuctionCount,
+        SUM(CASE WHEN ap.PROstatus = 'unsold' THEN 1 ELSE 0 END) AS unsoldAuctionCount
 
-                SUM(CASE WHEN ap.PROstatus = 'paid' THEN 1 ELSE 0 END) AS soldAuctionCount,
-                SUM(CASE WHEN ap.PROstatus = 'unsold' THEN 1 ELSE 0 END) AS unsoldAuctionCount
+      FROM auction_products ap
+      JOIN auctions a ON a.PROid = ap.PROid
+      ${auctionDateFilter}
+      `,
+            auctionDateParams
+        );
 
-            FROM auction_products ap
-            JOIN auctions a ON a.PROid = ap.PROid
-        `);
+        /* ---------------- 3) Reports ---------------- */
 
-        // 3) รวมยอดทั้งหมด
+        // A) Order status overview
+        const orderStatusOverview = await safe<RowDataPacket[]>(
+            "orderStatusOverview",
+            `
+      SELECT Ostatus AS status, COUNT(*) AS count
+      FROM orders
+      ${orderDateFilter}
+      GROUP BY Ostatus
+      ORDER BY COUNT(*) DESC
+      `,
+            orderDateParams
+        );
+
+        // B) Top products
+        const topProducts = await safe<RowDataPacket[]>(
+            "topProducts",
+            `
+      SELECT
+        p.Pid AS product_id,
+        p.Pname AS name,
+        '-' AS category,
+        SUM(oi.Oquantity) AS qty,
+        SUM(oi.Oquantity * oi.Oprice) AS revenue
+      FROM order_items oi
+      JOIN orders o ON o.Oid = oi.Oid
+      JOIN products p ON p.Pid = oi.Pid
+      WHERE
+        ${hasYear ? "o.Odate >= ? AND o.Odate < ? AND" : ""
+            }
+        (
+          (o.Opayment IN ('bank','transfer','bank_transfer') AND o.Ostatus = 'paid')
+          OR
+          (o.Opayment = 'cod' AND o.Ostatus IN ('shipping','delivered'))
+        )
+      GROUP BY p.Pid, p.Pname
+      ORDER BY revenue DESC
+      LIMIT 10
+      `,
+            hasYear ? [start, end] : []
+        );
+
+        // C) Category revenue (รวม)
+        const categoryRevenue = await safe<RowDataPacket[]>(
+            "categoryRevenue",
+            `
+      SELECT
+        'ทั้งหมด' AS category,
+        SUM(oi.Oquantity) AS qty,
+        SUM(oi.Oquantity * oi.Oprice) AS revenue
+      FROM order_items oi
+      JOIN orders o ON o.Oid = oi.Oid
+      WHERE
+        ${hasYear ? "o.Odate >= ? AND o.Odate < ? AND" : ""
+            }
+        (
+          (o.Opayment IN ('bank','transfer','bank_transfer') AND o.Ostatus = 'paid')
+          OR
+          (o.Opayment = 'cod' AND o.Ostatus IN ('shipping','delivered'))
+        )
+      `,
+            hasYear ? [start, end] : []
+        );
+
+        // D) Stock (current state)
+        const LOW_STOCK_THRESHOLD = 5;
+
+        const stockByCategory = await safe<RowDataPacket[]>(
+            "stockByCategory",
+            `
+      SELECT
+        'ทั้งหมด' AS category,
+        COUNT(Pid) AS total_products,
+        SUM(Pnumproduct) AS total_stock,
+        SUM(CASE WHEN Pnumproduct <= ${LOW_STOCK_THRESHOLD} THEN 1 ELSE 0 END) AS low_stock
+      FROM products
+      `
+        );
+
+        const lowStockProducts = await safe<RowDataPacket[]>(
+            "lowStockProducts",
+            `
+      SELECT
+        Pid AS product_id,
+        Pname AS name,
+        '-' AS category,
+        Pnumproduct AS stock
+      FROM products
+      WHERE Pnumproduct <= ${LOW_STOCK_THRESHOLD}
+      ORDER BY Pnumproduct ASC
+      LIMIT 12
+      `
+        );
+
+        // E) Top customers
+        const topCustomers = await safe<RowDataPacket[]>(
+            "topCustomers",
+            `
+      SELECT
+        cu.Cid AS customer_id,
+        cu.Cname AS name,
+        COUNT(o.Oid) AS orders,
+        SUM(o.Oprice) AS total_spent,
+        AVG(o.Oprice) AS avg_order
+      FROM orders o
+      JOIN customers cu ON cu.Cid = o.Cid
+      WHERE
+        ${hasYear ? "o.Odate >= ? AND o.Odate < ? AND" : ""
+            }
+        (
+          (o.Opayment IN ('bank','transfer','bank_transfer') AND o.Ostatus = 'paid')
+          OR
+          (o.Opayment = 'cod' AND o.Ostatus IN ('shipping','delivered'))
+        )
+      GROUP BY cu.Cid, cu.Cname
+      ORDER BY total_spent DESC
+      LIMIT 10
+      `,
+            hasYear ? [start, end] : []
+        );
+
+        /* ---------------- 4) Auction performance ---------------- */
+        let auctionParticipationAvg: number | null = null;
+        let auctionClosedRate: number | null = null;
+
+        try {
+            const [avgJoin] = await pool.query<RowDataPacket[]>(
+                `
+        SELECT AVG(cnt) AS avg_participants
+        FROM (
+          SELECT a.Aid, COUNT(b.id) AS cnt
+          FROM auctions a
+          LEFT JOIN bids b ON b.Aid = a.Aid
+          ${auctionDateFilter}
+          GROUP BY a.Aid
+        ) t
+        `,
+                auctionDateParams
+            );
+
+            const sold = Number(auctionStats?.[0]?.soldAuctionCount || 0);
+            const unsold = Number(auctionStats?.[0]?.unsoldAuctionCount || 0);
+            const closed = sold + unsold || 0;
+
+            auctionParticipationAvg = Number(avgJoin?.[0]?.avg_participants ?? 0);
+            auctionClosedRate = closed > 0 ? (sold / closed) * 100 : 0;
+        } catch { }
+
+        /* ---------------- 5) Total ---------------- */
         const totalSales =
-            Number(orderStats[0].orderSales || 0) +
-            Number(auctionStats[0].auctionSales || 0);
+            Number(orderStats?.[0]?.orderSales || 0) +
+            Number(auctionStats?.[0]?.auctionSales || 0);
 
         res.json({
+            year,
+            range: hasYear ? { start, end } : null,
+
             ...orderStats[0],
             ...auctionStats[0],
-            totalSales
-        });
+            totalSales,
 
+            orderStatusOverview,
+            topProducts,
+            categoryRevenue,
+            stockByCategory,
+            lowStockProducts,
+            topCustomers,
+
+            auctionParticipationAvg,
+            auctionClosedRate,
+        });
     } catch (err) {
         console.error("🔥 STATS ERROR:", err);
         res.status(500).json({ error: "ไม่สามารถโหลดสถิติได้" });
     }
 });
+
+
 router.patch("/orders/:id/shipping", async (req, res) => {
     const { id } = req.params;
     const { Oshipping, Otracking } = req.body;
@@ -700,6 +932,222 @@ router.patch("/orders/:id/delivered", async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: "อัปเดตไม่สำเร็จ" });
+    }
+});
+
+// GET /stats/sales-series?mode=day|month|year&year=2026
+// (ยังรองรับ start/end แบบเดิมด้วย ถ้าไม่ส่ง year)
+router.get('/stats/sales-series', verifyToken, onlyAdmin, async (req, res) => {
+    try {
+        const modeRaw = String(req.query.mode || 'day');
+        const mode: 'day' | 'month' | 'year' =
+            modeRaw === 'month' || modeRaw === 'year' ? modeRaw : 'day';
+
+        // ----- year support -----
+        const nowYear = new Date().getFullYear();
+        const yearQ = req.query.year;
+        const yearNum = Number(yearQ);
+
+        const hasYear =
+            typeof yearQ !== 'undefined' &&
+            Number.isFinite(yearNum) &&
+            yearNum >= 2000 &&
+            yearNum <= 2100;
+
+        const startQ = typeof req.query.start === 'string' ? req.query.start : '';
+        const endQ = typeof req.query.end === 'string' ? req.query.end : '';
+
+        let startDate: Date;
+        let endDate: Date;
+
+        if (hasYear) {
+            // ปีที่เลือก: [ปี-01-01, ปี+1-01-01)
+            startDate = new Date(`${yearNum}-01-01T00:00:00`);
+            endDate = new Date(`${yearNum + 1}-01-01T00:00:00`);
+        } else {
+            // ----- เดิม: start/end หรือ default range -----
+            const now = new Date();
+            endDate = endQ ? new Date(endQ + 'T23:59:59') : now;
+
+            if (startQ) {
+                startDate = new Date(startQ + 'T00:00:00');
+            } else {
+                startDate = new Date(endDate);
+                if (mode === 'day') startDate.setDate(startDate.getDate() - 6);
+                if (mode === 'month') startDate.setMonth(startDate.getMonth() - 11);
+                if (mode === 'year') startDate.setFullYear(startDate.getFullYear() - 4);
+            }
+        }
+
+        // MySQL DATETIME strings
+        const startStr = startDate.toISOString().slice(0, 19).replace('T', ' ');
+        const endStr = endDate.toISOString().slice(0, 19).replace('T', ' ');
+
+        // group key ตาม mode
+        const keyExprOrders =
+            mode === 'day'
+                ? `DATE_FORMAT(Odate, '%Y-%m-%d')`
+                : mode === 'month'
+                    ? `DATE_FORMAT(Odate, '%Y-%m')`
+                    : `YEAR(Odate)`;
+
+        const keyExprAuction =
+            mode === 'day'
+                ? `DATE_FORMAT(a.end_time, '%Y-%m-%d')`
+                : mode === 'month'
+                    ? `DATE_FORMAT(a.end_time, '%Y-%m')`
+                    : `YEAR(a.end_time)`;
+
+
+        // ------- orders series (transfer/cod) -------
+        const [orderRows] = await pool.query<RowDataPacket[]>(
+            `
+      SELECT
+        ${keyExprOrders} AS k,
+        SUM(
+          CASE
+            WHEN Opayment IN ('bank','transfer','bank_transfer') AND Ostatus = 'paid'
+            THEN Oprice ELSE 0 END
+        ) AS transfer,
+        SUM(
+          CASE
+            WHEN Opayment = 'cod' AND Ostatus IN ('shipping','delivered')
+            THEN Oprice ELSE 0 END
+        ) AS cod
+      FROM orders
+      WHERE Odate >= ? AND Odate < ?
+      GROUP BY k
+      ORDER BY k;
+      `,
+            [startStr, endStr]
+        );
+
+        // ------- auction series (auction) -------
+        const [auctionRows] = await pool.query<RowDataPacket[]>(
+            `
+      SELECT
+        ${keyExprAuction} AS k,
+        SUM(CASE WHEN ap.PROstatus = 'paid' THEN a.current_price ELSE 0 END) AS auction
+      FROM auction_products ap
+      JOIN auctions a ON a.PROid = ap.PROid
+      WHERE a.end_time >= ? AND a.end_time < ?
+      GROUP BY k
+      ORDER BY k;
+      `,
+            [startStr, endStr]
+        );
+
+        // ------- merge result -------
+        type Row = { k: string; transfer: number; cod: number; auction: number; total: number };
+        const map = new Map<string, Row>();
+        const toKey = (k: unknown) => String(k);
+
+        for (const r of orderRows) {
+            const k = toKey(r.k);
+            map.set(k, {
+                k,
+                transfer: Number(r.transfer || 0),
+                cod: Number(r.cod || 0),
+                auction: 0,
+                total: 0,
+            });
+        }
+
+        for (const r of auctionRows) {
+            const k = toKey(r.k);
+            const cur = map.get(k) || { k, transfer: 0, cod: 0, auction: 0, total: 0 };
+            cur.auction = Number(r.auction || 0);
+            map.set(k, cur);
+        }
+
+        const toTime = (k: string) => {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(k)) return new Date(k + 'T00:00:00').getTime();
+            if (/^\d{4}-\d{2}$/.test(k)) return new Date(k + '-01T00:00:00').getTime();
+            if (/^\d{4}$/.test(k)) return new Date(k + '-01-01T00:00:00').getTime();
+            return 0;
+        };
+
+        const series = Array.from(map.values())
+            .sort((a, b) => toTime(String(a.k)) - toTime(String(b.k)))
+            .map((x) => ({
+                ...x,
+                total: x.transfer + x.cod + x.auction,
+            }));
+
+
+        res.json({
+            mode,
+            year: hasYear ? yearNum : nowYear,
+            start: startStr.slice(0, 10),
+            end: endStr.slice(0, 10),
+            series,
+        });
+    } catch (err) {
+        console.error('🔥 SALES-SERIES ERROR:', err);
+        res.status(500).json({ error: 'ไม่สามารถโหลดรายงานยอดขายได้' });
+    }
+});
+
+
+// GET /stats/pending — งานค้างของแอดมิน
+router.get('/stats/pending', verifyToken, onlyAdmin, async (req, res) => {
+    try {
+        const hasYear = typeof req.query.year !== "undefined";
+        let start = "";
+        let end = "";
+        let orderDateFilter = "";
+        let orderParams: any[] = [];
+        let auctionDateFilter = "";
+        let auctionParams: any[] = [];
+
+        if (hasYear) {
+            const year = parseYear(req.query.year);
+            const r = yearRange(year);
+            start = r.start;
+            end = r.end;
+
+            orderDateFilter = ` AND Odate >= ? AND Odate < ?`;
+            orderParams = [start, end];
+
+            // ถ้าประมูลมี end_time ในตาราง auctions
+            auctionDateFilter = ` AND a.end_time >= ? AND a.end_time < ?`;
+            auctionParams = [start, end];
+        }
+
+        // 1) รอตรวจสอบการชำระเงิน
+        const [prRows] = await pool.query<RowDataPacket[]>(`
+      SELECT COUNT(*) AS n
+      FROM orders
+      WHERE Ostatus IN ('payment_review','waiting')
+      ${orderDateFilter}
+    `, orderParams);
+
+        // 2) รอจัดส่ง (จ่ายแล้ว)
+        const [shipRows] = await pool.query<RowDataPacket[]>(`
+      SELECT COUNT(*) AS n
+      FROM orders
+      WHERE Ostatus = 'paid'
+      ${orderDateFilter}
+    `, orderParams);
+
+        // 3) ผู้ชนะประมูลรอชำระ
+        // ถ้าไม่มีตาราง auctions / ไม่มี end_time ให้ตัด filter ออกก่อน
+        const [awRows] = await pool.query<RowDataPacket[]>(`
+      SELECT COUNT(*) AS n
+      FROM auction_products ap
+      JOIN auctions a ON a.PROid = ap.PROid
+      WHERE ap.PROstatus = 'pending_payment'
+      ${auctionDateFilter}
+    `, auctionParams);
+
+        res.json({
+            paymentReviewOrders: Number(prRows[0]?.n || 0),
+            toShipOrders: Number(shipRows[0]?.n || 0),
+            pendingAuctionWinners: Number(awRows[0]?.n || 0),
+        });
+    } catch (err) {
+        console.error('🔥 PENDING ERROR:', err);
+        res.status(500).json({ error: 'ไม่สามารถโหลดงานที่รอดำเนินการได้' });
     }
 });
 
