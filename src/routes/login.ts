@@ -123,6 +123,11 @@ router.post("/login", async (req: Request, res: Response, next: NextFunction) =>
       }
 
       const user = custRows[0];
+      // ✅ ถ้าโดนแบน ห้ามล็อกอิน
+      if (user.Cstatus === "banned") {
+        return res.status(403).json({ message: "บัญชีถูกระงับการใช้งาน" });
+      }
+
       const ok = await bcrypt.compare(password, user.Cpassword);
       if (!ok) return res.status(401).json({ message: "รหัสผ่านไม่ถูกต้อง" });
 

@@ -164,6 +164,20 @@ interface AuctionCheckoutRow extends RowDataPacket {
   PROstatus: string;
 }
 
+// ✅ แถวสำหรับตาราง "ประมูลรอจัดส่ง"
+interface AuctionToShipRow extends RowDataPacket {
+  Aid: number;
+  PROid: number;
+  PROname: string;
+  current_price: number;
+  winner_name: string;
+  end_time: Date;
+  payment_status: string | null;
+  shipping_status: string | null;
+  tracking_number: string | null;
+  shipping_company: string | null;
+}
+
 
 
 
@@ -198,9 +212,14 @@ export async function autoCloseExpired() {
       if (bids.length === 0) {
         await conn.query<ResultSetHeader>(
           `UPDATE auctions
-     SET status='closed', winner_id=NULL, current_price=start_price
-     WHERE Aid=?`, [auc.Aid]
+   SET status='closed',
+       winner_id=NULL,
+       current_price=start_price,
+       payment_status=NULL
+   WHERE Aid=?`,
+          [auc.Aid]
         );
+
         await conn.query<ResultSetHeader>(
           `UPDATE auction_products SET PROstatus='unsold' WHERE PROid=?`, [auc.PROid]
         );
@@ -210,9 +229,14 @@ export async function autoCloseExpired() {
 
         await conn.query<ResultSetHeader>(
           `UPDATE auctions
-     SET status='closed', winner_id=?, current_price=?
-     WHERE Aid=?`, [winnerId, winAmount, auc.Aid]
+   SET status='closed',
+       winner_id=?,
+       current_price=?,
+       payment_status='pending_payment'
+   WHERE Aid=?`,
+          [winnerId, winAmount, auc.Aid]
         );
+
         await conn.query<ResultSetHeader>(
           `UPDATE auction_products SET PROstatus='pending_payment' WHERE PROid=?`, [auc.PROid]
         );
@@ -536,56 +560,95 @@ router.patch("/auctions/:id/close", async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const { id } = req.params;
+    const Aid = Number(id);
+    if (!Aid) return res.status(400).json({ error: "Aid ไม่ถูกต้อง" });
+
     await conn.beginTransaction();
 
+    // ล็อก auction กันชนกัน (optional แต่แนะนำ)
+    const [aucRows] = await conn.query<RowDataPacket[]>(
+      `SELECT Aid, PROid, start_price, status
+       FROM auctions
+       WHERE Aid = ?
+       FOR UPDATE`,
+      [Aid]
+    );
+
+    if (aucRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ error: "ไม่พบรอบประมูล" });
+    }
+
+    const PROid = Number(aucRows[0].PROid);
+    const startPrice = Number(aucRows[0].start_price);
+
+    // หา bid ที่มากที่สุด
     const [bids] = await conn.query<BidRow[]>(
       `SELECT user_id, amount
        FROM bids
        WHERE auction_id = ?
        ORDER BY amount DESC, created_at ASC
        LIMIT 1`,
-      [id]
+      [Aid]
     );
 
+    // -------------------------
+    // CASE 1: ไม่มีผู้ชนะ
+    // -------------------------
     if (bids.length === 0) {
       await conn.query<ResultSetHeader>(
         `UPDATE auctions
-         SET status='closed', winner_id=NULL, current_price=start_price
+         SET status='closed',
+             winner_id=NULL,
+             current_price=start_price,
+             payment_status=NULL
          WHERE Aid=?`,
-        [id]
+        [Aid]
       );
+
+      // จะใช้ 'ready' หรือ 'unsold' แล้วแต่ flow ร้านตะเอง
       await conn.query<ResultSetHeader>(
-        `UPDATE auction_products ap
-         JOIN auctions a ON a.PROid = ap.PROid
-         SET ap.PROstatus = 'ready'
-         WHERE a.Aid = ?`,
-        [id]
+        `UPDATE auction_products
+         SET PROstatus='ready'
+         WHERE PROid=?`,
+        [PROid]
       );
+
       await conn.commit();
       return res.json({ message: "ปิดประมูลแล้ว (ไม่มีผู้ชนะ)" });
     }
 
-    const winnerId = bids[0].user_id;
-    const winAmount = bids[0].amount;
+    // -------------------------
+    // CASE 2: มีผู้ชนะ
+    // -------------------------
+    const winnerId = Number(bids[0].user_id);
+    const winAmount = Number(bids[0].amount);
 
     const [result] = await conn.query<ResultSetHeader>(
       `UPDATE auctions
-       SET status='closed', winner_id=?, current_price=?
+       SET status='closed',
+           winner_id=?,
+           current_price=?,
+           payment_status='pending_payment'
        WHERE Aid=?`,
-      [winnerId, winAmount, id]
+      [winnerId, winAmount, Aid]
     );
 
+    // อัปเดตสถานะสินค้าประมูลให้รอชำระ
     await conn.query<ResultSetHeader>(
-      `UPDATE auction_products ap
-       JOIN auctions a ON a.PROid = ap.PROid
-       SET ap.PROstatus = 'pending_payment'
-       WHERE a.Aid = ?`,
-      [id]
+      `UPDATE auction_products
+       SET PROstatus='pending_payment'
+       WHERE PROid=?`,
+      [PROid]
     );
 
     await conn.commit();
-    if (result.affectedRows === 0) return res.status(409).json({ error: "ปิดประมูลไม่สำเร็จ" });
-    res.json({ message: "ปิดประมูลแล้ว", winnerId, winAmount });
+
+    if (result.affectedRows === 0) {
+      return res.status(409).json({ error: "ปิดประมูลไม่สำเร็จ" });
+    }
+
+    return res.json({ message: "ปิดประมูลแล้ว", winnerId, winAmount });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -593,6 +656,7 @@ router.patch("/auctions/:id/close", async (req, res, next) => {
     conn.release();
   }
 });
+
 
 
 
@@ -1016,6 +1080,13 @@ router.post(
         WHERE PROid = ?
       `, [auc.PROid]);
 
+      await conn.query(`
+  UPDATE auctions
+  SET payment_status = 'payment_review'
+  WHERE Aid = ?
+`, [Aid]);
+
+
       conn.release();
       return res.json({ message: "อัปโหลดสลิปสำเร็จ รอแอดมินตรวจสอบ" });
 
@@ -1030,8 +1101,136 @@ router.post(
   }
 );
 
+router.get("/auctions/winners", verifyToken, async (req: AuthedRequest, res, next) => {
+  try {
+    // กันไว้: หน้าแอดมินเท่านั้น
+    if (!req.user || req.user.role !== "admin") {
+      return res.status(403).json({ message: "admin only" });
+    }
+
+    await autoCloseExpired(); // ให้สถานะล่าสุด
+
+    const type = String(req.query.type || "pending_payment"); // pending_payment | payment_review
+    const limit = Math.min(Number(req.query.limit || 10), 50);
+
+    const where: string[] = [];
+    const params: any[] = [];
+
+    // เอาเฉพาะที่ "ผู้ชนะต้องจ่าย" / "รอตรวจสลิป"
+    if (type === "pending_payment") {
+      where.push("a.payment_status = 'pending_payment'");
+    } else if (type === "payment_review") {
+      where.push("a.payment_status = 'payment_review'");
+    }
+
+    const sql = `
+      SELECT
+      a.Aid AS Aid,  
+        p.PROid,
+        p.PROname,
+        a.current_price,
+        c.Cusername AS winner_name,
+        a.end_time,
+        p.PROstatus
+      FROM auctions a
+      JOIN auction_products p ON a.PROid = p.PROid
+      LEFT JOIN customers c ON a.winner_id = c.Cid
+      WHERE a.status = 'closed'
+        AND a.winner_id IS NOT NULL
+        ${where.length ? "AND " + where.join(" AND ") : ""}
+      ORDER BY a.end_time DESC
+      LIMIT ?
+    `;
+
+    params.push(limit);
+
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
 
 
+router.get("/auctions/shipping", async (req, res, next) => {
+  try {
+    await autoCloseExpired();
+
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+
+    // ✅ เงื่อนไข: ปิดแล้ว + มีผู้ชนะ + จ่ายแล้ว (paid) + ยังไม่ shipped/delivered
+    const [rows] = await pool.query<AuctionToShipRow[]>(
+      `
+      SELECT
+        a.Aid,
+        p.PROid,
+        p.PROname,
+        a.current_price,
+        c.Cusername AS winner_name,
+        a.end_time,
+        a.payment_status,
+        p.shipping_status,
+        p.tracking_number,
+        p.shipping_company
+      FROM auctions a
+      JOIN auction_products p ON p.PROid = a.PROid
+      JOIN customers c ON c.Cid = a.winner_id
+      WHERE a.status = 'closed'
+        AND a.winner_id IS NOT NULL
+        AND a.payment_status = 'paid'
+        AND YEAR(a.end_time) = ?
+        AND (p.shipping_status IS NULL OR p.shipping_status IN ('to_ship','pending','ready'))
+      ORDER BY a.end_time DESC
+      LIMIT ?
+      `,
+      [year, limit]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+export async function autoBanUnpaidWinners() {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // 1) แบนลูกค้าที่ไม่จ่ายใน 24 ชม.
+    await conn.query(`
+      UPDATE customers c
+      JOIN auctions a ON a.winner_id = c.Cid
+      SET c.Cstatus = 'banned'
+      WHERE a.status = 'closed'
+        AND a.winner_id IS NOT NULL
+        AND a.end_time IS NOT NULL
+        AND a.payment_status = 'pending_payment'
+        AND a.end_time < DATE_SUB(NOW(), INTERVAL 1 DAY)
+        AND (c.Cstatus IS NULL OR c.Cstatus <> 'banned')
+    `);
+
+    // 2) เปลี่ยนสถานะ auction เป็น expired กันรันซ้ำ
+    await conn.query(`
+      UPDATE auctions
+      SET payment_status = 'expired'
+      WHERE status = 'closed'
+        AND winner_id IS NOT NULL
+        AND end_time IS NOT NULL
+        AND payment_status = 'pending_payment'
+        AND end_time < DATE_SUB(NOW(), INTERVAL 1 DAY)
+    `);
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
 
 
 

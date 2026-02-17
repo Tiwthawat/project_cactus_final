@@ -313,7 +313,7 @@ router.patch("/auction-orders/:Aid/shipping", async (req, res) => {
       SET 
         p.shipping_company = ?,
         p.tracking_number = ?,
-        p.shipping_status = 'shipped'
+        p.shipping_status = 'shipping'
       WHERE a.Aid = ?
     `,
             [shipping_company, tracking_number, Aid]
@@ -346,4 +346,59 @@ router.patch("/auction-orders/:Aid/delivered", async (req, res) => {
         return res.status(500).json({ error: "เกิดข้อผิดพลาด" });
     }
 });
+
+// ✅ Admin → เช็คคนชนะที่ยัง pending_payment เกิน 24 ชม. แล้วแบน
+router.post("/auction-orders/check-expired", async (req, res) => {
+    try {
+        const conn = await pool.getConnection();
+
+        // 1) หา auctions ที่หมดเวลา: end_time + 24 ชม. แล้ว ยัง pending_payment
+        const [rows] = await conn.query<RowDataPacket[]>(
+            `
+      SELECT a.Aid, a.winner_id
+      FROM auctions a
+      WHERE a.winner_id IS NOT NULL
+        AND a.end_time IS NOT NULL
+        AND a.payment_status = 'pending_payment'
+        AND a.end_time < DATE_SUB(NOW(), INTERVAL 1 DAY)
+      `
+        );
+
+        if (rows.length === 0) {
+            conn.release();
+            return res.json({ message: "ไม่มีรายการหมดเวลา", banned: 0, expired: 0 });
+        }
+
+        const aids = rows.map(r => r.Aid);
+        const winners = rows.map(r => r.winner_id);
+
+        // 2) แบนลูกค้า (กันอัปเดตซ้ำด้วย)
+        await conn.query(
+            `
+      UPDATE customers
+      SET Cstatus = 'banned'
+      WHERE Cid IN (${winners.map(() => "?").join(",")})
+        AND (Cstatus IS NULL OR Cstatus <> 'banned')
+      `,
+            winners
+        );
+
+        // 3) เปลี่ยนสถานะ auctions เป็น expired กันยิงซ้ำ
+        await conn.query(
+            `
+      UPDATE auctions
+      SET payment_status = 'expired'
+      WHERE Aid IN (${aids.map(() => "?").join(",")})
+      `,
+            aids
+        );
+
+        conn.release();
+        return res.json({ message: "จัดการหมดเวลาแล้ว", banned: winners.length, expired: aids.length, aids });
+    } catch (err) {
+        console.error("❌ check-expired error:", err);
+        return res.status(500).json({ message: "ผิดพลาด" });
+    }
+});
+
 export default router;

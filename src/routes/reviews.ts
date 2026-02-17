@@ -69,15 +69,39 @@ router.post(
 router.get("/reviews/store", async (_req, res) => {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT id, text, stars, images, created_at FROM reviews WHERE order_id IS NULL ORDER BY created_at DESC"
+      `
+      SELECT
+        r.id,
+        r.text,
+        r.stars,
+        r.images,
+        r.created_at,
+        c.Cname
+      FROM reviews r
+      JOIN customers c ON c.Cid = r.Cid
+      WHERE r.order_id IS NULL
+      ORDER BY r.created_at DESC
+      `
     );
 
-    return res.json(rows);
+    // แปลง images จาก JSON string → array
+    const mapped = rows.map((r: any) => ({
+      ...r,
+      images:
+        typeof r.images === "string"
+          ? JSON.parse(r.images)
+          : Array.isArray(r.images)
+            ? r.images
+            : [],
+    }));
+
+    return res.json(mapped);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "ดึงรีวิวร้านไม่สำเร็จ" });
   }
 });
+
 
 /* =====================================================
    2.5) เช็กว่าผู้ใช้รีวิวร้านไปแล้วหรือยัง
@@ -119,12 +143,24 @@ router.get("/orders/:id/review", async (req, res) => {
       [id]
     );
 
-    return res.json(rows[0] || null);
+    const r: any = rows[0];
+    if (!r) return res.json(null);
+
+    return res.json({
+      ...r,
+      images:
+        typeof r.images === "string"
+          ? JSON.parse(r.images)
+          : Array.isArray(r.images)
+            ? r.images
+            : [],
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "ดึงข้อมูลรีวิวล้มเหลว" });
   }
 });
+
 
 /* =====================================================
    4) POST รีวิวสินค้า (1 ครั้งต่อ order)
@@ -276,8 +312,8 @@ router.get("/products/:pid/reviews", async (req, res) => {
         typeof r.images === "string"
           ? JSON.parse(r.images)
           : Array.isArray(r.images)
-          ? r.images
-          : [],
+            ? r.images
+            : [],
     }));
 
     return res.json(mapped);

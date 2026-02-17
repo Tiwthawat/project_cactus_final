@@ -106,14 +106,15 @@ router.post("/product", async (req: Request, res: Response, next: NextFunction) 
 		Typeid,
 		Subtypeid,
 	} = req.body;
+	const PstatusAuto = Number(Pnumproduct) > 0 ? "In stock" : "Out of stock";
 
 	try {
 		await pool.query(
-			`INSERT INTO products 
-        (Pname, Pprice, Pnumproduct, Ppicture, Pdetail, Pstatus, Prenume, Typeid, Subtypeid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			[Pname, Pprice, Pnumproduct, Ppicture, Pdetail, Pstatus, Prenume, Typeid, Subtypeid]
-		);
+  `INSERT INTO products 
+   (Pname, Pprice, Pnumproduct, Ppicture, Pdetail, Pstatus, Prenume, Typeid, Subtypeid)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  [Pname, Pprice, Pnumproduct, Ppicture, Pdetail, PstatusAuto, Prenume, Typeid, Subtypeid]
+);
 		res.status(201).json({ message: "เพิ่มสินค้าสำเร็จ" });
 	} catch (err) {
 		next(err);
@@ -121,16 +122,26 @@ router.post("/product", async (req: Request, res: Response, next: NextFunction) 
 });
 
 // ✅ GET /product/latest
-router.get("/product/latest", async (_req: Request, res: Response) => {
+router.get("/product/latest", async (_req: Request, res: Response, next: NextFunction) => {
+	const connection = await pool.getConnection();
 	try {
-		const [rows] = await pool.query(
-			"SELECT * FROM products ORDER BY Pid DESC LIMIT 10"
+		const [rows] = await connection.query(
+			`
+      SELECT p.*, t.typenproduct, s.subname
+      FROM products p
+      LEFT JOIN product_types t ON p.Typeid = t.Typeid
+      LEFT JOIN subtypes s ON p.Subtypeid = s.Subtypeid
+      ORDER BY p.Pid DESC
+      LIMIT 10
+      `
 		);
-		res.json(rows);
+		res.status(200).json(rows);
 	} catch (err) {
-		console.error("Error fetching latest products:", err);
-		res.status(500).json({ error: "Internal Server Error" });
+		next(err);
+	} finally {
+		connection.release();
 	}
 });
+
 
 export default router;

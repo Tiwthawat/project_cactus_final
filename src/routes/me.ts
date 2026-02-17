@@ -69,7 +69,7 @@ interface AuctionWinRow extends RowDataPacket {
 
     shipping_company: string | null;
     tracking_number: string | null;
-    shipping_status: "pending" | "shipped" | "delivered" | null;
+    shipping_status: "pending" | "shipping" | "delivered" | null;
 }
 
 interface MyBiddingRow extends RowDataPacket {
@@ -403,5 +403,7 @@ router.get("/orders/:id", async (req, res) => {
         return res.status(500).json({ message: "Internal Server Error" });
     }
 });
+
+
 
 export default router;
