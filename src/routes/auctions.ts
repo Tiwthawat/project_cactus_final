@@ -832,9 +832,9 @@ router.delete(
 
       await conn.beginTransaction();
 
-      // ล็อกแถว เพื่อกันชนแข่งกันลบ/บิด
+      // ล็อกแถว + ดึง PROid มาด้วย
       const [rows] = await conn.query<AuctionsTableRow[]>(
-        `SELECT Aid, start_price, current_price, status
+        `SELECT Aid, PROid, start_price, current_price, status
            FROM auctions
           WHERE Aid = ?
           FOR UPDATE`,
@@ -854,24 +854,34 @@ router.delete(
         return res.status(400).json({ error: "ลบไม่ได้: รอบนี้มีคนบิดแล้ว" });
       }
 
-      // (แนะนำ) ให้ลบได้เฉพาะรอบที่ยัง open เพื่อเก็บประวัติรอบที่ปิดแล้ว
+      // ลบได้เฉพาะรอบที่ยัง open
       if (a.status !== "open") {
         await conn.rollback();
         return res.status(400).json({ error: "ลบได้เฉพาะรอบที่ยังเปิดอยู่" });
       }
 
+      // ลบรอบ
       const [result] = await conn.query<ResultSetHeader>(
         `DELETE FROM auctions WHERE Aid = ?`,
         [id]
       );
 
-      await conn.commit();
-
       if (result.affectedRows === 0) {
+        await conn.rollback();
         return res.status(409).json({ error: "ลบไม่สำเร็จ" });
       }
 
-      res.json({ message: "ลบสำเร็จ" });
+      // ✅ คืนสถานะสินค้าเป็น ready
+      await conn.query(
+        `UPDATE auction_products
+           SET PROstatus = 'ready'
+         WHERE PROid = ?`,
+        [a.PROid]
+      );
+
+      await conn.commit();
+
+      res.json({ message: "ลบรอบสำเร็จ และคืนสถานะสินค้าแล้ว" });
     } catch (err) {
       await conn.rollback();
       next(err);
@@ -880,6 +890,7 @@ router.delete(
     }
   }
 );
+
 
 
 

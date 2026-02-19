@@ -42,6 +42,9 @@ app.use('/slips', express.static(path.join(__dirname, 'public', 'slips')));
 app.use('/qrs', express.static(path.join(__dirname, 'public', 'qrs')));
 app.use('/products', express.static(path.join(__dirname, 'public/products')));
 app.use("/reviews", express.static(path.join(__dirname, "public", "reviews")));
+app.use("/forum", express.static(path.join(__dirname, "public", "forum")));
+
+
 
 
 
@@ -104,6 +107,7 @@ app.use('/favorites', favorites);
 app.use(auctions);
 app.use(adminorders);
 app.use(adminbids)
+
 
 
 

@@ -121,28 +121,66 @@ router.use(verifyToken);
 --------------------------*/
 router.get("/", async (req, res, next) => {
     try {
-        const decoded = requireUserFromReq(req);
-        if (!decoded) return res.status(403).json({ message: "User only" });
+        const u = (req as AuthedRequest).user;
+        if (!u) return res.status(401).json({ message: "Unauthorized" });
 
-        const conn = await pool.getConnection();
-        const [rows] = await conn.query<CustomerRow[]>(
-            `
-      SELECT 
-        Cid, Cusername, Cstatus, Cname, Caddress, Csubdistrict, 
-        Cdistrict, Cprovince, Czipcode, Cphone, Cdate, Cbirth, Cprofile
-      FROM customers
-      WHERE Cid = ?
-      `,
-            [decoded.Cid]
-        );
-        conn.release();
+        // ✅ ถ้าเป็น user
+        if (u.role === "user") {
+            const conn = await pool.getConnection();
+            const [rows] = await conn.query<CustomerRow[]>(
+                `
+                SELECT 
+                  Cid, Cusername, Cstatus, Cname, Caddress, Csubdistrict, 
+                  Cdistrict, Cprovince, Czipcode, Cphone, 
+                  Cdate, Cbirth, Cprofile
+                FROM customers
+                WHERE Cid = ?
+                `,
+                [u.Cid]
+            );
+            conn.release();
 
-        if (rows.length === 0) return res.status(404).json({ message: "ไม่พบผู้ใช้" });
-        res.json({ user: rows[0] });
+            if (rows.length === 0)
+                return res.status(404).json({ message: "ไม่พบผู้ใช้" });
+
+            return res.json({
+                role: "user",
+                user: rows[0],
+            });
+        }
+
+        // ✅ ถ้าเป็น admin
+        if (u.role === "admin") {
+            const [rows] = await pool.query<RowDataPacket[]>(
+                `
+                SELECT 
+                  Aid, Aname
+                FROM admin
+                WHERE Aid = ?
+                `,
+                [u.Aid]
+            );
+
+            if (rows.length === 0)
+                return res.status(404).json({ message: "ไม่พบแอดมิน" });
+
+            return res.json({
+                role: "admin",
+                user: {
+                    Cid: null,
+                    Cname: rows[0].Aname,
+                    Cprofile: null,
+                },
+            });
+        }
+
+        return res.status(403).json({ message: "Forbidden" });
+
     } catch (err) {
         next(err);
     }
 });
+
 
 /* ------------------------------------------
    GET /me/my-auction-wins  (รายการที่ชนะ)
@@ -190,7 +228,6 @@ router.get("/my-auction-wins/:Aid", async (req, res, next) => {
 
         const userId = decoded.Cid;
         const { Aid } = req.params;
-
         const [rows] = await pool.query<AuctionWinRow[]>(
             `
       SELECT
@@ -217,8 +254,26 @@ router.get("/my-auction-wins/:Aid", async (req, res, next) => {
             [Aid, userId]
         );
 
-        if (rows.length === 0) return res.status(404).json({ message: "ไม่พบข้อมูลรายการนี้" });
-        res.json(rows[0]);
+        if (rows.length === 0)
+            return res.status(404).json({ message: "ไม่พบข้อมูลรายการนี้" });
+
+        const auctionDetail = rows[0];
+
+        // ดึงบัญชีโอนเงิน
+        const [transferRows] = await pool.query<RowDataPacket[]>(
+            `
+  SELECT Tname, Tnum, Taccount, Tbranch, Tqr
+  FROM transfer
+  ORDER BY Tid DESC
+  
+  `
+        );
+
+        res.json({
+            ...auctionDetail,
+            transfer: transferRows[0] || null
+        });
+
     } catch (err) {
         next(err);
     }

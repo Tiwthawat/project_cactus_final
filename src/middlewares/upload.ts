@@ -75,6 +75,32 @@ export const uploadReviewImage = multer({
     }
 });
 
+// 👉 สำหรับอัปโหลดรูปกระทู้/คอมเมนต์ forum
+const forumDir = path.join(__dirname, "..", "public", "forum");
+if (!fs.existsSync(forumDir)) fs.mkdirSync(forumDir, { recursive: true });
+
+const forumStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, forumDir),
+    filename: (req, file, cb) => {
+        const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        cb(null, unique + path.extname(file.originalname));
+    },
+});
+
+// ✅ ใส่ filter แบบไม่ชน TS (ไม่โยน Error ใน cb)
+export const uploadForumImage = multer({
+    storage: forumStorage,
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB/รูป
+        files: 6,
+    },
+    fileFilter: (req, file, cb) => {
+        const ok = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.mimetype);
+        cb(null, ok);
+    },
+});
+
+
 
 
 

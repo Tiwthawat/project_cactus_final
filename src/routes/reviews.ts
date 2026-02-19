@@ -76,6 +76,8 @@ router.get("/reviews/store", async (_req, res) => {
         r.stars,
         r.images,
         r.created_at,
+        r.admin_reply,
+        r.replied_at,
         c.Cname
       FROM reviews r
       JOIN customers c ON c.Cid = r.Cid
@@ -84,23 +86,40 @@ router.get("/reviews/store", async (_req, res) => {
       `
     );
 
-    // แปลง images จาก JSON string → array
-    const mapped = rows.map((r: any) => ({
-      ...r,
-      images:
-        typeof r.images === "string"
-          ? JSON.parse(r.images)
-          : Array.isArray(r.images)
-            ? r.images
-            : [],
-    }));
+    const mapped = rows.map((r: any) => {
+      let images: string[] = [];
+
+      if (Array.isArray(r.images)) {
+        images = r.images;
+      } else if (typeof r.images === "string") {
+        try {
+          const parsed = JSON.parse(r.images);
+          images = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          // กรณีเคยเก็บเป็น string path เดี่ยว ๆ
+          images = r.images.startsWith("/") ? [r.images] : [];
+        }
+      }
+
+      return {
+        id: r.id,
+        text: r.text,
+        stars: r.stars,
+        images,
+        created_at: r.created_at,
+        admin_reply: r.admin_reply ?? null,
+        replied_at: r.replied_at ?? null,
+        Cname: r.Cname,
+      };
+    });
 
     return res.json(mapped);
   } catch (err) {
-    console.error(err);
+    console.error("GET /reviews/store error:", err);
     return res.status(500).json({ message: "ดึงรีวิวร้านไม่สำเร็จ" });
   }
 });
+
 
 
 /* =====================================================
@@ -136,30 +155,64 @@ router.get("/reviews/store/user", verifyToken, async (req: RequestWithUser, res)
 ===================================================== */
 router.get("/orders/:id/review", async (req, res) => {
   try {
-    const { id } = req.params;
+    const orderId = Number(req.params.id);
+
+    if (!orderId) {
+      return res.status(400).json({ message: "order id ไม่ถูกต้อง" });
+    }
 
     const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT stars, text, images FROM reviews WHERE order_id = ? LIMIT 1",
-      [id]
+      `
+      SELECT
+        id,
+        stars,
+        text,
+        images,
+        admin_reply,
+        replied_at,
+        created_at
+      FROM reviews
+      WHERE order_id = ?
+      LIMIT 1
+      `,
+      [orderId]
     );
 
+    if (!rows.length) {
+      return res.json(null);
+    }
+
     const r: any = rows[0];
-    if (!r) return res.json(null);
+
+    // parse images แบบปลอดภัย
+    let parsedImages: string[] = [];
+    if (Array.isArray(r.images)) {
+      parsedImages = r.images;
+    } else if (typeof r.images === "string") {
+      try {
+        const parsed = JSON.parse(r.images);
+        parsedImages = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        parsedImages = [];
+      }
+    }
 
     return res.json({
-      ...r,
-      images:
-        typeof r.images === "string"
-          ? JSON.parse(r.images)
-          : Array.isArray(r.images)
-            ? r.images
-            : [],
+      id: r.id,
+      stars: r.stars,
+      text: r.text,
+      images: parsedImages,
+      admin_reply: r.admin_reply ?? null,
+      replied_at: r.replied_at ?? null,
+      created_at: r.created_at,
     });
+
   } catch (err) {
-    console.error(err);
+    console.error("GET /orders/:id/review error:", err);
     return res.status(500).json({ message: "ดึงข้อมูลรีวิวล้มเหลว" });
   }
 });
+
 
 
 /* =====================================================
@@ -294,7 +347,9 @@ router.get("/products/:pid/reviews", async (req, res) => {
         r.stars,
         r.created_at,
         r.order_id,
-        r.images
+        r.images,
+        r.admin_reply,
+        r.replied_at
       FROM reviews r
       JOIN order_items oi
         ON oi.Oid = r.order_id
@@ -305,16 +360,32 @@ router.get("/products/:pid/reviews", async (req, res) => {
       [pid]
     );
 
-    // images เป็น JSON → ส่งออกเป็น array ให้ฝั่งหน้าใช้ได้เลย
-    const mapped = rows.map((r: any) => ({
-      ...r,
-      images:
-        typeof r.images === "string"
-          ? JSON.parse(r.images)
-          : Array.isArray(r.images)
-            ? r.images
-            : [],
-    }));
+    const mapped = rows.map((r: any) => {
+      let images: string[] = [];
+
+      if (Array.isArray(r.images)) {
+        images = r.images.filter((x: any) => typeof x === "string");
+      } else if (typeof r.images === "string") {
+        try {
+          const parsed = JSON.parse(r.images);
+          images = Array.isArray(parsed) ? parsed.filter((x: any) => typeof x === "string") : [];
+        } catch {
+          // เผื่อบางเคสเป็น path เดี่ยวๆ ไม่ใช่ JSON
+          images = r.images.startsWith("/") ? [r.images] : [];
+        }
+      }
+
+      return {
+        id: r.id,
+        text: r.text,
+        stars: r.stars,
+        created_at: r.created_at,
+        order_id: r.order_id,
+        images,
+        admin_reply: r.admin_reply ?? null,
+        replied_at: r.replied_at ?? null,
+      };
+    });
 
     return res.json(mapped);
   } catch (err) {
@@ -322,6 +393,7 @@ router.get("/products/:pid/reviews", async (req, res) => {
     return res.status(500).json({ message: "ดึงรีวิวสินค้าล้มเหลว" });
   }
 });
+
 
 
 
