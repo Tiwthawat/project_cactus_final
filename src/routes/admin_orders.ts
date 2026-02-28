@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { pool } from "../app";
-import { createNotification } from "../lib/notify";
+
 import { verifyToken } from "../middlewares/auth";
 import { onlyAdmin } from "../middlewares/onlyAdmin";
+import { createNotification } from "../utils/notify";
 
 const router = Router();
 
