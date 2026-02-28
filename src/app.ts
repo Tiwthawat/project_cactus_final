@@ -16,6 +16,8 @@ import favorites from './routes/favoritesRoutes';
 import forum from "./routes/forum";
 import login from "./routes/login";
 import me from "./routes/me";
+
+import notifications from "./routes/notifications";
 import orders from './routes/orders';
 import payment from './routes/payment';
 import productID from "./routes/productId";
@@ -88,6 +90,7 @@ app.get("/debug/time", async (_req, res) => {
 });
 app.use(register);
 app.use(login);
+app.use("/notifications", notifications);
 app.use(productall);
 app.use(customerall);
 app.use("/", productID);
@@ -107,6 +110,7 @@ app.use('/favorites', favorites);
 app.use(auctions);
 app.use(adminorders);
 app.use(adminbids)
+
 
 
 
