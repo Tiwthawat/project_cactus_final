@@ -17,6 +17,7 @@ import forum from "./routes/forum";
 import login from "./routes/login";
 import me from "./routes/me";
 
+import "dotenv/config";
 import notifications from "./routes/notifications";
 import orders from './routes/orders';
 import payment from './routes/payment';
@@ -29,7 +30,6 @@ import transfer from './routes/transfer';
 import updateProfile from './routes/update-profile';
 import upload from './routes/upload';
 import zipcode from './routes/zipcode';
-
 
 
 
@@ -63,6 +63,12 @@ app.use(express.urlencoded({ extended: true }));
 
 export const handler = ServerlessHttp(app);
 
+console.log("DB_HOST", process.env.DB_HOST);
+console.log("DB_PORT", process.env.DB_PORT);
+console.log("DB_USER", process.env.DB_USER);
+console.log("DB_DATABASE", process.env.DB_DATABASE);
+console.log("DB_PASSWORD length", process.env.DB_PASSWORD?.length);
+
 export const pool: Pool = createPool({
 	connectionLimit: 1,
 	host: process.env.DB_HOST,
@@ -70,6 +76,9 @@ export const pool: Pool = createPool({
 	user: process.env.DB_USER,
 	password: process.env.DB_PASSWORD,
 	database: process.env.DB_DATABASE,
+	ssl: {
+		rejectUnauthorized: false
+	}
 });
 (pool as Pool).on("connection", (conn: PoolConnection) => {
 	conn.query("SET time_zone = '+07:00'");
